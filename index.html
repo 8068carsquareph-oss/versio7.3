@@ -3,11 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=yes">
-    <title>8068 CAR SQUARE | POS System v8.0</title>
-    <!-- Firebase SDKs -->
-    <script src="https://www.gstatic.com/firebasejs/9.22.0/firebase-app-compat.js"></script>
-    <script src="https://www.gstatic.com/firebasejs/9.22.0/firebase-firestore-compat.js"></script>
-    <script src="https://www.gstatic.com/firebasejs/9.22.0/firebase-auth-compat.js"></script>
+    <title>8068 CAR SQUARE | POS System v7.5</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
@@ -59,10 +55,10 @@
             50% { opacity: 0.5; transform: scale(0.8); }
             100% { opacity: 1; transform: scale(1); }
         }
-        .cloud-status { display: inline-block; padding: 4px 12px; border-radius: 20px; font-size: 11px; font-weight: bold; }
-        .cloud-connected { background: #00ff8833; color: #00ff88; }
-        .cloud-disconnected { background: #ff6b6b33; color: #ff6b6b; }
-        .cloud-syncing { background: #ffaa0033; color: #ffaa00; animation: pulse 1s infinite; }
+        .sync-status { display: inline-block; padding: 4px 12px; border-radius: 20px; font-size: 11px; font-weight: bold; }
+        .sync-active { background: #00ff8833; color: #00ff88; }
+        .sync-inactive { background: #ff6b6b33; color: #ff6b6b; }
+        .sync-syncing { background: #ffaa0033; color: #ffaa00; animation: pulse 1s infinite; }
         .commission-detail-row { border-left: 3px solid #00ff8833; }
         .receipt-58mm { width: 58mm; margin: 0 auto; padding: 8px; background: white; color: black; font-family: 'Courier New', monospace; font-size: 11px; }
         .receipt-58mm .center { text-align: center; }
@@ -84,198 +80,6 @@
 <div id="root" class="min-h-screen bg-black"></div>
 
 <script>
-    // ======================== FIREBASE CONFIGURATION ========================
-    // Replace with your Firebase config
-    const firebaseConfig = {
-        apiKey: "YOUR_API_KEY",
-        authDomain: "YOUR_PROJECT.firebaseapp.com",
-        projectId: "YOUR_PROJECT_ID",
-        storageBucket: "YOUR_PROJECT.appspot.com",
-        messagingSenderId: "YOUR_SENDER_ID",
-        appId: "YOUR_APP_ID"
-    };
-
-    // ======================== FIREBASE INITIALIZATION ========================
-    let firebaseApp = null;
-    let firestore = null;
-    let auth = null;
-    let firebaseInitialized = false;
-    let cloudSyncEnabled = false;
-    let db = null;
-
-    function initFirebase() {
-        try {
-            if (!firebaseConfig.apiKey || firebaseConfig.apiKey === "YOUR_API_KEY") {
-                console.warn("Firebase not configured. Using local mode.");
-                return false;
-            }
-            
-            firebaseApp = firebase.initializeApp(firebaseConfig);
-            firestore = firebase.firestore(firebaseApp);
-            auth = firebase.auth(firebaseApp);
-            db = firestore;
-            firebaseInitialized = true;
-            
-            firestore.enablePersistence({ synchronizeTabs: true })
-                .then(() => console.log("Firebase offline persistence enabled"))
-                .catch(err => console.warn("Firebase persistence error:", err));
-            
-            console.log("Firebase initialized successfully!");
-            return true;
-        } catch(e) {
-            console.error("Firebase initialization error:", e);
-            return false;
-        }
-    }
-
-    // ======================== CLOUD SYNC FUNCTIONS ========================
-    async function syncToCloud() {
-        if (!firebaseInitialized) {
-            updateCloudStatus('disconnected');
-            return false;
-        }
-        
-        updateCloudStatus('syncing');
-        
-        try {
-            const dataToSync = {
-                services: appData.services,
-                categories: appData.categories,
-                customers: appData.customers,
-                transactions: appData.transactions,
-                openServices: appData.openServices,
-                staff: appData.staff,
-                expenses: appData.expenses,
-                inventory: appData.inventory,
-                systemSettings: appData.systemSettings,
-                commissionMatrix: appData.commissionMatrix,
-                nextIds: appData.nextIds
-            };
-            
-            const docRef = firestore.collection('pos_system').doc('main_data');
-            await docRef.set({
-                data: dataToSync,
-                updatedAt: firebase.firestore.FieldValue.serverTimestamp(),
-                version: '8.0'
-            });
-            
-            appData.systemSettings.lastCloudSync = new Date().toISOString();
-            appData.systemSettings.cloudSyncEnabled = true;
-            saveToLocal();
-            updateCloudStatus('connected');
-            return true;
-        } catch(e) {
-            console.error("Cloud sync error:", e);
-            updateCloudStatus('disconnected');
-            return false;
-        }
-    }
-
-    async function loadFromCloud() {
-        if (!firebaseInitialized) {
-            updateCloudStatus('disconnected');
-            return false;
-        }
-        
-        updateCloudStatus('syncing');
-        
-        try {
-            const docRef = firestore.collection('pos_system').doc('main_data');
-            const doc = await docRef.get();
-            
-            if (doc.exists) {
-                const cloudData = doc.data().data;
-                if (cloudData) {
-                    // Merge cloud data with local
-                    appData.services = cloudData.services || appData.services;
-                    appData.categories = cloudData.categories || appData.categories;
-                    appData.customers = cloudData.customers || appData.customers;
-                    appData.transactions = cloudData.transactions || appData.transactions;
-                    appData.openServices = cloudData.openServices || appData.openServices;
-                    appData.staff = cloudData.staff || appData.staff;
-                    appData.expenses = cloudData.expenses || appData.expenses;
-                    appData.inventory = cloudData.inventory || appData.inventory;
-                    appData.systemSettings = { ...appData.systemSettings, ...cloudData.systemSettings };
-                    appData.commissionMatrix = cloudData.commissionMatrix || appData.commissionMatrix;
-                    appData.nextIds = cloudData.nextIds || appData.nextIds;
-                    
-                    appData.systemSettings.lastCloudSync = new Date().toISOString();
-                    appData.systemSettings.cloudSyncEnabled = true;
-                    saveToLocal();
-                    updateCloudStatus('connected');
-                    renderApp();
-                    return true;
-                }
-            }
-            return false;
-        } catch(e) {
-            console.error("Cloud load error:", e);
-            updateCloudStatus('disconnected');
-            return false;
-        }
-    }
-
-    // Real-time listener for cloud updates
-    function setupCloudListener() {
-        if (!firebaseInitialized) return;
-        
-        const docRef = firestore.collection('pos_system').doc('main_data');
-        docRef.onSnapshot((doc) => {
-            if (doc.exists) {
-                const cloudData = doc.data().data;
-                if (cloudData) {
-                    const localTimestamp = appData.systemSettings.lastCloudSync ? new Date(appData.systemSettings.lastCloudSync).getTime() : 0;
-                    const cloudTimestamp = doc.data().updatedAt ? doc.data().updatedAt.toMillis() : 0;
-                    
-                    if (cloudTimestamp > localTimestamp) {
-                        // Cloud has newer data - update local
-                        console.log("Cloud update detected, syncing...");
-                        loadFromCloud();
-                    }
-                }
-            }
-        }, (error) => {
-            console.error("Cloud listener error:", error);
-        });
-    }
-
-    function toggleCloudSync() {
-        if (!firebaseInitialized) {
-            alert('⚠️ Firebase is not configured. Please add your Firebase config.');
-            return;
-        }
-        
-        cloudSyncEnabled = !cloudSyncEnabled;
-        appData.systemSettings.cloudSyncEnabled = cloudSyncEnabled;
-        
-        if (cloudSyncEnabled) {
-            syncToCloud().then(() => {
-                setupCloudListener();
-                alert('✅ Cloud sync enabled! Data will auto-sync across all devices.');
-            });
-        } else {
-            alert('❌ Cloud sync disabled.');
-        }
-        saveToLocal();
-        renderApp();
-    }
-
-    function updateCloudStatus(status) {
-        const statusEl = document.getElementById('cloudStatus');
-        if (statusEl) {
-            if (status === 'connected') {
-                statusEl.innerHTML = '<i class="fas fa-cloud"></i> Cloud Connected';
-                statusEl.className = 'cloud-status cloud-connected';
-            } else if (status === 'syncing') {
-                statusEl.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Syncing...';
-                statusEl.className = 'cloud-status cloud-syncing';
-            } else {
-                statusEl.innerHTML = '<i class="fas fa-cloud"></i> Cloud Offline';
-                statusEl.className = 'cloud-status cloud-disconnected';
-            }
-        }
-    }
-
     // ======================== COMMISSION MATRIX ========================
     function initializeCommissionMatrix() {
         return {
@@ -355,9 +159,7 @@
             timezone: "Asia/Manila",
             businessHours: "Mon-Sat 8:00 AM - 7:00 PM",
             companyLogo: null,
-            defaultPaymentMethods: ['Cash', 'GCash', 'Maya', 'Credit Card', 'Bank Transfer'],
-            cloudSyncEnabled: false,
-            lastCloudSync: null
+            defaultPaymentMethods: ['Cash', 'GCash', 'Maya', 'Credit Card', 'Bank Transfer']
         },
         users: [
             { id: 1, username: "owner", password: "owner123", role: "Owner", name: "Owner", isActive: true },
@@ -398,7 +200,7 @@
         return "Specialty";
     }
 
-    const saved = localStorage.getItem("8068_enterprise_v8");
+    const saved = localStorage.getItem("8068_enterprise_v7_5");
     if(saved) {
         try {
             const parsed = JSON.parse(saved);
@@ -418,19 +220,12 @@
             if (!appData.systemSettings.defaultPaymentMethods) {
                 appData.systemSettings.defaultPaymentMethods = ['Cash', 'GCash', 'Maya', 'Credit Card', 'Bank Transfer'];
             }
-            if (appData.systemSettings.cloudSyncEnabled === undefined) {
-                appData.systemSettings.cloudSyncEnabled = false;
-            }
         } catch(e) {}
     }
 
     function saveToLocal() {
-        localStorage.setItem("8068_enterprise_v8", JSON.stringify(appData));
+        localStorage.setItem("8068_enterprise_v7_5", JSON.stringify(appData));
         localStorage.setItem("8068_system_last_saved", new Date().toISOString());
-        // Auto-sync to cloud if enabled
-        if (appData.systemSettings.cloudSyncEnabled && firebaseInitialized) {
-            syncToCloud();
-        }
     }
 
     function getCommissionAmount(serviceName, size, tierPercent) {
@@ -458,6 +253,86 @@
     let showLogin = true;
 
     function generateReceiptNo() { return "INV-" + new Date().getFullYear() + "-" + (appData.nextIds.transaction++); }
+
+    // ======================== 58MM RECEIPT WITH AUTO-CUT ========================
+    function print58mmReceipt(tx) {
+        const printWindow = window.open('', '_blank');
+        const logoHtml = appData.systemSettings.companyLogo ? 
+            `<div class="center"><img src="${appData.systemSettings.companyLogo}" style="max-width:80px;max-height:50px;object-fit:contain;"></div>` : '';
+        
+        const autoCut = `<script>
+            document.addEventListener('DOMContentLoaded', function() {
+                window.print();
+                window.onafterprint = function() { window.close(); };
+            });
+        <\/script>`;
+        
+        printWindow.document.write(`<!DOCTYPE html>
+        <html>
+        <head>
+            <title>Receipt</title>
+            <style>
+                body { margin: 0; padding: 4px; background: white; font-family: 'Courier New', monospace; width: 58mm; margin: 0 auto; }
+                .receipt-58mm { width: 58mm; padding: 4px; background: white; color: black; font-size: 11px; font-family: 'Courier New', monospace; }
+                .center { text-align: center; }
+                .line { border-top: 1px dashed #000; margin: 4px 0; }
+                .bold { font-weight: bold; }
+                .small { font-size: 9px; }
+                .total { font-size: 16px; font-weight: bold; }
+                .item .name { display: inline-block; width: 65%; }
+                .item .price { display: inline-block; width: 35%; text-align: right; }
+                .header-text { font-size: 14px; font-weight: bold; }
+                .sub-text { font-size: 10px; }
+                .thankyou { font-size: 12px; font-weight: bold; margin-top: 6px; }
+                img { max-width: 80px; max-height: 50px; object-fit: contain; }
+                @media print { body { margin: 0; padding: 0; } .receipt-58mm { width: 58mm; padding: 2px; } }
+            </style>
+        </head>
+        <body>
+            <div class="receipt-58mm">
+                ${logoHtml}
+                <div class="center header-text">${appData.systemSettings.companyName}</div>
+                <div class="center sub-text">${appData.systemSettings.tagline}</div>
+                <div class="center sub-text">${appData.systemSettings.address}</div>
+                <div class="center sub-text">Tel: ${appData.systemSettings.phone}</div>
+                <div class="center sub-text">FB: ${appData.systemSettings.facebook}</div>
+                <div class="line"></div>
+                <div><span class="bold">Receipt:</span> ${tx.id}</div>
+                <div><span class="bold">Date:</span> ${new Date(tx.date).toLocaleString()}</div>
+                <div><span class="bold">Customer:</span> ${tx.customer}</div>
+                <div><span class="bold">Vehicle:</span> ${tx.vehicle} | ${tx.plate}</div>
+                <div class="line"></div>
+                ${tx.items.map(i => `
+                    <div class="item">
+                        <span class="name">${i.serviceName} (${i.variant}) x${i.quantity}</span>
+                        <span class="price">₱${(i.price * i.quantity).toFixed(2)}</span>
+                        ${i.remarks ? `<div class="small" style="padding-left:4px;">📝 ${i.remarks}</div>` : ''}
+                        ${i.assignedStaff?.length ? `<div class="small" style="padding-left:4px;">Staff: ${i.assignedStaff.map(s => s.name).join(', ')}</div>` : ''}
+                    </div>
+                `).join('')}
+                <div class="line"></div>
+                <div><span class="bold">Subtotal:</span> ₱${tx.subtotal.toFixed(2)}</div>
+                ${tx.discount > 0 ? `<div><span class="bold">Discount:</span> -₱${tx.discount.toFixed(2)}</div>` : ''}
+                ${tx.loyaltyUsed > 0 ? `<div><span class="bold">Loyalty:</span> -₱${tx.loyaltyUsed.toFixed(2)}</div>` : ''}
+                <div class="line"></div>
+                <div class="center total">TOTAL: ₱${tx.total.toFixed(2)}</div>
+                <div class="line"></div>
+                <div><span class="bold">Payment:</span> ${tx.paymentMethod}</div>
+                ${tx.paymentMethod === 'Cash' ? `<div><span class="bold">Tendered:</span> ₱${tx.cashTendered.toFixed(2)}</div><div><span class="bold">Change:</span> ₱${tx.change.toFixed(2)}</div>` : ''}
+                <div class="line"></div>
+                <div class="center thankyou">Thank You For Choosing</div>
+                <div class="center thankyou">${appData.systemSettings.companyName}</div>
+                <div class="center sub-text">${appData.systemSettings.receiptFooter}</div>
+                <div style="text-align:center; font-size:8px; margin-top:4px; color:#888;">${tx.id}</div>
+                <div style="text-align:center; font-size:8px; margin-top:2px; color:#888;">${new Date().toLocaleString()}</div>
+                <div style="text-align:center; font-size:6px; margin-top:8px;">--- Cut Here ---</div>
+            </div>
+            ${autoCut}
+        </body>
+        </html>`);
+        printWindow.document.close();
+        setTimeout(() => { printWindow.focus(); printWindow.print(); }, 500);
+    }
 
     // ======================== AUTHENTICATION ========================
     function login(username, password) {
@@ -490,8 +365,8 @@
                     ${appData.systemSettings.companyLogo ? `<img src="${appData.systemSettings.companyLogo}" class="mx-auto max-h-20 mb-4">` : ''}
                     <h2 class="text-3xl font-bold glow-text">${appData.systemSettings.companyName}</h2>
                     <p class="text-gray-400 text-sm">${appData.systemSettings.tagline}</p>
-                    <p class="text-cyan-400 text-xs mt-2">Enterprise POS System v8.0</p>
-                    <p class="text-xs text-green-400 mt-1"><i class="fas fa-cloud"></i> Cloud-Ready</p>
+                    <p class="text-cyan-400 text-xs mt-2">Enterprise POS System v7.5</p>
+                    <p class="text-xs text-gray-500 mt-1"><i class="fas fa-print"></i> 58mm Receipt | Auto-Cut</p>
                 </div>
                 <div class="space-y-4">
                     <div><label class="text-gray-400">Username</label><input type="text" id="loginUser" class="w-full bg-gray-800 p-3 rounded border border-gray-700" placeholder="Enter username" value="owner"></div>
@@ -511,10 +386,6 @@
         const pass = document.getElementById('loginPass')?.value;
         if(login(user, pass)) {
             alert(`Welcome ${appData.currentUser.name}! (${appData.currentUser.role})`);
-            if (appData.systemSettings.cloudSyncEnabled && firebaseInitialized) {
-                updateCloudStatus('syncing');
-                setTimeout(() => loadFromCloud(), 500);
-            }
         } else {
             alert("Invalid credentials!");
         }
@@ -727,84 +598,6 @@
     };
     
     window.closePaymentModal = () => document.getElementById('paymentModal')?.remove();
-
-    // ======================== 58MM RECEIPT WITH AUTO-CUT ========================
-    function print58mmReceipt(tx) {
-        const printWindow = window.open('', '_blank');
-        const logoHtml = appData.systemSettings.companyLogo ? 
-            `<div class="center"><img src="${appData.systemSettings.companyLogo}" style="max-width:80px;max-height:50px;object-fit:contain;"></div>` : '';
-        
-        printWindow.document.write(`<!DOCTYPE html>
-        <html>
-        <head>
-            <title>Receipt</title>
-            <style>
-                body { margin: 0; padding: 4px; background: white; font-family: 'Courier New', monospace; width: 58mm; margin: 0 auto; }
-                .receipt-58mm { width: 58mm; padding: 4px; background: white; color: black; font-size: 11px; font-family: 'Courier New', monospace; }
-                .center { text-align: center; }
-                .line { border-top: 1px dashed #000; margin: 4px 0; }
-                .bold { font-weight: bold; }
-                .small { font-size: 9px; }
-                .total { font-size: 16px; font-weight: bold; }
-                .item .name { display: inline-block; width: 65%; }
-                .item .price { display: inline-block; width: 35%; text-align: right; }
-                .header-text { font-size: 14px; font-weight: bold; }
-                .sub-text { font-size: 10px; }
-                .thankyou { font-size: 12px; font-weight: bold; margin-top: 6px; }
-                img { max-width: 80px; max-height: 50px; object-fit: contain; }
-                @media print { body { margin: 0; padding: 0; } .receipt-58mm { width: 58mm; padding: 2px; } }
-            </style>
-        </head>
-        <body>
-            <div class="receipt-58mm">
-                ${logoHtml}
-                <div class="center header-text">${appData.systemSettings.companyName}</div>
-                <div class="center sub-text">${appData.systemSettings.tagline}</div>
-                <div class="center sub-text">${appData.systemSettings.address}</div>
-                <div class="center sub-text">Tel: ${appData.systemSettings.phone}</div>
-                <div class="center sub-text">FB: ${appData.systemSettings.facebook}</div>
-                <div class="line"></div>
-                <div><span class="bold">Receipt:</span> ${tx.id}</div>
-                <div><span class="bold">Date:</span> ${new Date(tx.date).toLocaleString()}</div>
-                <div><span class="bold">Customer:</span> ${tx.customer}</div>
-                <div><span class="bold">Vehicle:</span> ${tx.vehicle} | ${tx.plate}</div>
-                <div class="line"></div>
-                ${tx.items.map(i => `
-                    <div class="item">
-                        <span class="name">${i.serviceName} (${i.variant}) x${i.quantity}</span>
-                        <span class="price">₱${(i.price * i.quantity).toFixed(2)}</span>
-                        ${i.remarks ? `<div class="small" style="padding-left:4px;">📝 ${i.remarks}</div>` : ''}
-                        ${i.assignedStaff?.length ? `<div class="small" style="padding-left:4px;">Staff: ${i.assignedStaff.map(s => s.name).join(', ')}</div>` : ''}
-                    </div>
-                `).join('')}
-                <div class="line"></div>
-                <div><span class="bold">Subtotal:</span> ₱${tx.subtotal.toFixed(2)}</div>
-                ${tx.discount > 0 ? `<div><span class="bold">Discount:</span> -₱${tx.discount.toFixed(2)}</div>` : ''}
-                ${tx.loyaltyUsed > 0 ? `<div><span class="bold">Loyalty:</span> -₱${tx.loyaltyUsed.toFixed(2)}</div>` : ''}
-                <div class="line"></div>
-                <div class="center total">TOTAL: ₱${tx.total.toFixed(2)}</div>
-                <div class="line"></div>
-                <div><span class="bold">Payment:</span> ${tx.paymentMethod}</div>
-                ${tx.paymentMethod === 'Cash' ? `<div><span class="bold">Tendered:</span> ₱${tx.cashTendered.toFixed(2)}</div><div><span class="bold">Change:</span> ₱${tx.change.toFixed(2)}</div>` : ''}
-                <div class="line"></div>
-                <div class="center thankyou">Thank You For Choosing</div>
-                <div class="center thankyou">${appData.systemSettings.companyName}</div>
-                <div class="center sub-text">${appData.systemSettings.receiptFooter}</div>
-                <div style="text-align:center; font-size:8px; margin-top:4px; color:#888;">${tx.id}</div>
-                <div style="text-align:center; font-size:8px; margin-top:2px; color:#888;">${new Date().toLocaleString()}</div>
-                <div style="text-align:center; font-size:6px; margin-top:8px;">--- Cut Here ---</div>
-            </div>
-            <script>
-                document.addEventListener('DOMContentLoaded', function() {
-                    window.print();
-                    window.onafterprint = function() { window.close(); };
-                });
-            <\/script>
-        </body>
-        </html>`);
-        printWindow.document.close();
-        setTimeout(() => { printWindow.focus(); printWindow.print(); }, 500);
-    }
 
     // ======================== REPORT GENERATION ========================
     function generateDailyReport() {
@@ -1677,8 +1470,6 @@
         const logoHtml = appData.systemSettings.companyLogo ? 
             `<img src="${appData.systemSettings.companyLogo}" class="company-logo inline-block mr-2" alt="Logo">` : '';
         
-        const cloudStatus = appData.systemSettings.cloudSyncEnabled && firebaseInitialized ? 'connected' : 'disconnected';
-        
         let commissionHtml = staffDailyCommissions.map(s => `
             <div class="commission-item flex justify-between items-center py-2 border-b border-gray-700/50">
                 <div class="flex items-center gap-2">
@@ -1714,12 +1505,7 @@
                     <button onclick="logout()" class="text-xs text-red-400 ml-3 hover:text-red-300"><i class="fas fa-sign-out-alt"></i> Logout</button>
                 </div>
             </div>
-            <div class="flex items-center gap-3">
-                <span id="cloudStatus" class="cloud-status ${cloudStatus === 'connected' ? 'cloud-connected' : 'cloud-disconnected'}">
-                    ${cloudStatus === 'connected' ? '<i class="fas fa-cloud"></i> Cloud Connected' : '<i class="fas fa-cloud"></i> Cloud Offline'}
-                </span>
-                <div class="text-sm text-gray-400">${appData.systemSettings.businessHours}</div>
-            </div>
+            <div class="text-sm text-gray-400">${appData.systemSettings.businessHours}</div>
         </div>
         
         <div class="grid lg:grid-cols-4 gap-4 mb-6">
@@ -2506,7 +2292,6 @@
         }
         const s = appData.systemSettings;
         const logoHtml = s.companyLogo ? `<img src="${s.companyLogo}" class="company-logo" style="max-width:120px;max-height:80px;">` : 'No logo uploaded';
-        const cloudStatus = firebaseInitialized && s.cloudSyncEnabled ? 'Connected' : 'Disconnected';
         
         return `<h3 class="text-xl font-bold mb-4"><i class="fas fa-cogs"></i> System Settings</h3>
             <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
@@ -2531,15 +2316,11 @@
                     <div><label class="text-gray-400 text-sm">Loyalty Points per ₱1000</label><div class="editable-field bg-gray-800 p-2 rounded cursor-pointer" onclick="editLoyalty()">${(s.loyaltyPointsPerPeso * 1000)} points</div></div>
                     <div><label class="text-gray-400 text-sm">Tax Rate</label><div class="editable-field bg-gray-800 p-2 rounded cursor-pointer" onclick="editTax()">${s.taxRate}%</div></div>
                     <div><label class="text-gray-400 text-sm">Business Hours</label><div class="editable-field bg-gray-800 p-2 rounded cursor-pointer" onclick="editSetting('businessHours')">${s.businessHours}</div></div>
-                    <div><label class="text-gray-400 text-sm">Cloud Sync</label>
-                        <div class="flex items-center gap-3 bg-gray-800 p-2 rounded">
-                            <span class="text-sm">Status: <span class="${cloudStatus === 'Connected' ? 'text-green-400' : 'text-red-400'}">${cloudStatus}</span></span>
-                            <button onclick="toggleCloudSync()" class="bg-${s.cloudSyncEnabled ? 'red' : 'green'}-600 px-3 py-1 rounded text-sm text-white">
-                                ${s.cloudSyncEnabled ? 'Disable Sync' : 'Enable Sync'}
-                            </button>
-                            ${s.lastCloudSync ? `<span class="text-xs text-gray-400">Last: ${new Date(s.lastCloudSync).toLocaleString()}</span>` : ''}
+                    <div><label class="text-gray-400 text-sm">Print Settings</label>
+                        <div class="bg-gray-800 p-2 rounded">
+                            <div class="text-sm">Receipt Size: <span class="text-cyan-400">58mm (Thermal)</span></div>
+                            <div class="text-sm">Auto-Cut: <span class="text-green-400">Enabled ✓</span></div>
                         </div>
-                        ${!firebaseInitialized ? `<div class="text-xs text-yellow-400 mt-1">⚠️ Firebase not configured. Add your Firebase config to enable cloud sync.</div>` : ''}
                     </div>
                 </div>
             </div>
@@ -2551,18 +2332,16 @@
             </div>
             <div class="mt-4 p-3 bg-gray-800 rounded-lg text-xs">
                 <div class="text-gray-400">System Info</div>
-                <div>Version: 8.0 Cloud Edition | Last Saved: ${localStorage.getItem('8068_system_last_saved') ? new Date(localStorage.getItem('8068_system_last_saved')).toLocaleString() : 'Never'}</div>
+                <div>Version: 7.5 Enterprise (58mm Receipt) | Last Saved: ${localStorage.getItem('8068_system_last_saved') ? new Date(localStorage.getItem('8068_system_last_saved')).toLocaleString() : 'Never'}</div>
                 <div>Records: ${appData.transactions.length} TX | ${appData.customers.length} Customers | ${appData.staff.length} Staff</div>
                 <div>Commission Entries: ${Object.keys(appData.commissionMatrix || {}).length}</div>
                 <div>Open Services: ${appData.openServices.filter(s=>s.status!=='completed').length}</div>
                 <div>Inventory Items: ${appData.inventory.length}</div>
-                <div>Cloud Sync: ${s.cloudSyncEnabled ? '✅ Enabled' : '❌ Disabled'}</div>
                 <div>Receipt Format: 58mm Thermal with Auto-Cut</div>
             </div>
         </div>`;
     }
 
-    window.toggleCloudSync = toggleCloudSync;
     window.editPaymentMethods = () => {
         const current = appData.systemSettings.defaultPaymentMethods.join(', ');
         const newMethods = prompt("Edit payment methods (comma separated):", current);
@@ -2673,28 +2452,13 @@
     }
     setInterval(updateClock, 1000);
 
-    // ======================== INITIALIZE FIREBASE ========================
-    const firebaseConfigured = initFirebase();
-    if (firebaseConfigured && appData.systemSettings.cloudSyncEnabled) {
-        updateCloudStatus('syncing');
-        setTimeout(async () => {
-            await loadFromCloud();
-            setupCloudListener();
-            updateCloudStatus('connected');
-        }, 1000);
-    } else if (firebaseConfigured) {
-        updateCloudStatus('disconnected');
-    } else {
-        updateCloudStatus('disconnected');
-    }
-
     // ======================== UI ========================
     document.body.innerHTML = `
         <div class="max-w-screen-2xl mx-auto px-4 py-5">
             <div class="flex flex-wrap justify-between items-center border-b border-blue-800 pb-4 mb-6">
                 <div class="flex items-center gap-3">
                     ${appData.systemSettings.companyLogo ? `<img src="${appData.systemSettings.companyLogo}" class="company-logo" alt="Logo">` : ''}
-                    <div><h1 class="text-3xl font-extrabold glow-text">${appData.systemSettings.companyName}</h1><p class="text-sm text-gray-400">${appData.systemSettings.tagline} | v8.0 Cloud Edition</p></div>
+                    <div><h1 class="text-3xl font-extrabold glow-text">${appData.systemSettings.companyName}</h1><p class="text-sm text-gray-400">${appData.systemSettings.tagline} | v7.5</p></div>
                 </div>
                 <div class="flex gap-2 flex-wrap mt-2">
                     <button onclick="navigate('dashboard')" class="px-3 py-2 bg-gray-900 rounded-lg neon-border text-sm"><i class="fas fa-chart-line"></i> Dashboard</button>
@@ -2707,15 +2471,14 @@
                 </div>
             </div>
             <div id="mainContent"></div>
-            <footer class="text-center text-gray-500 text-sm mt-12 pt-4 border-t border-gray-800">${appData.systemSettings.companyName} | 58mm Receipt | Auto-Cut | Cloud-Ready v8.0</footer>
+            <footer class="text-center text-gray-500 text-sm mt-12 pt-4 border-t border-gray-800">${appData.systemSettings.companyName} | 58mm Receipt | Auto-Cut Enabled</footer>
         </div>
     `;
     renderApp();
     saveToLocal();
 
-    console.log('%c8068 CAR SQUARE - Enterprise Management System v8.0 (Cloud Edition)', 'color: #00d4ff; font-size: 20px; font-weight: bold;');
+    console.log('%c8068 CAR SQUARE - Enterprise Management System v7.5', 'color: #00d4ff; font-size: 20px; font-weight: bold;');
     console.log(`%cRecords: ${appData.transactions.length} TX | ${appData.customers.length} Customers | ${appData.staff.length} Staff | ${appData.openServices.filter(s=>s.status!=='completed').length} Open Services`, 'color: #00ff88;');
-    console.log(`%cCloud Sync: ${appData.systemSettings.cloudSyncEnabled ? '✅ Enabled' : '❌ Disabled'}`, 'color: ${appData.systemSettings.cloudSyncEnabled ? '#00ff88' : '#ff6b6b'};');
     console.log('%cReceipt Format: 58mm Thermal with Auto-Cut ✓', 'color: #ffaa00;');
 </script>
 </body>
