@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=yes">
-    <title>8068 CAR SQUARE | POS System v8.0</title>
+    <title>8068 CAR SQUARE | POS System v8.1</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
@@ -76,6 +76,9 @@
         .calendar-header { color: #888; font-size: 11px; text-transform: uppercase; text-align: center; padding: 4px; }
         .stat-number { font-size: 28px; font-weight: bold; }
         .stat-label { font-size: 11px; color: #888; text-transform: uppercase; letter-spacing: 0.5px; }
+        .weekday-col { background: #1a1a1a; border-radius: 4px; padding: 2px 4px; text-align: center; font-size: 11px; }
+        .commission-summary-table td { padding: 6px 4px; border-bottom: 1px solid #222; }
+        .commission-summary-table th { padding: 8px 4px; border-bottom: 2px solid #00d4ff; color: #00d4ff; font-size: 11px; text-transform: uppercase; }
         @media print {
             .no-print { display: none; }
             .receipt-58mm { width: 58mm; margin: 0; padding: 4px; }
@@ -265,24 +268,43 @@
 
     function generateReceiptNo() { return "INV-" + new Date().getFullYear() + "-" + (appData.nextIds.transaction++); }
 
-    // ======================== RECALCULATE STAFF COMMISSIONS ========================
+    // ======================== RECALCULATE STAFF COMMISSIONS (FULL REBUILD) ========================
     function recalculateStaffCommissions() {
+        // Reset staff metrics
         appData.staff.forEach(s => {
             s.totalCommission = 0;
             s.jobsCompleted = 0;
             s.salesGenerated = 0;
+            s.weeklyBreakdown = { Sunday: 0, Monday: 0, Tuesday: 0, Wednesday: 0, Thursday: 0, Friday: 0, Saturday: 0 };
+            s.weekPart1Total = 0; // Sun-Tue
+            s.weekPart2Total = 0; // Wed-Sat
         });
 
         appData.transactions.forEach(t => {
             if (t.staffCommissions) {
+                const txDate = new Date(t.date);
+                const dayName = ['Sunday','Monday','Tuesday','Wednesday','Thursday','Friday','Saturday'][txDate.getDay()];
                 Object.entries(t.staffCommissions).forEach(([staffId, data]) => {
                     const staff = appData.staff.find(s => s.id === parseInt(staffId));
                     if (staff) {
-                        staff.totalCommission = (staff.totalCommission || 0) + (data.commission || 0);
+                        const commission = data.commission || 0;
+                        staff.totalCommission = (staff.totalCommission || 0) + commission;
                         staff.jobsCompleted = (staff.jobsCompleted || 0) + (data.jobs || 1);
                         staff.salesGenerated = (staff.salesGenerated || 0) + (t.total || 0);
+                        // Weekly breakdown
+                        if (staff.weeklyBreakdown) {
+                            staff.weeklyBreakdown[dayName] = (staff.weeklyBreakdown[dayName] || 0) + commission;
+                        }
                     }
                 });
+            }
+        });
+
+        // Compute week part totals
+        appData.staff.forEach(s => {
+            if (s.weeklyBreakdown) {
+                s.weekPart1Total = (s.weeklyBreakdown.Sunday || 0) + (s.weeklyBreakdown.Monday || 0) + (s.weeklyBreakdown.Tuesday || 0);
+                s.weekPart2Total = (s.weeklyBreakdown.Wednesday || 0) + (s.weeklyBreakdown.Thursday || 0) + (s.weeklyBreakdown.Friday || 0) + (s.weeklyBreakdown.Saturday || 0);
             }
         });
 
@@ -398,8 +420,8 @@
                     ${appData.systemSettings.companyLogo ? `<img src="${appData.systemSettings.companyLogo}" class="mx-auto max-h-20 mb-4">` : ''}
                     <h2 class="text-3xl font-bold glow-text">${appData.systemSettings.companyName}</h2>
                     <p class="text-gray-400 text-sm">${appData.systemSettings.tagline}</p>
-                    <p class="text-cyan-400 text-xs mt-2">Enterprise POS System v8.0</p>
-                    <p class="text-xs text-green-400 mt-1"><i class="fas fa-chart-line"></i> Report Summaries with Calendar</p>
+                    <p class="text-cyan-400 text-xs mt-2">Enterprise POS System v8.1</p>
+                    <p class="text-xs text-green-400 mt-1"><i class="fas fa-chart-line"></i> Enhanced Weekly Commission Reports</p>
                 </div>
                 <div class="space-y-4">
                     <div><label class="text-gray-400">Username</label><input type="text" id="loginUser" class="w-full bg-gray-800 p-3 rounded border border-gray-700" placeholder="Enter username" value="owner"></div>
@@ -422,6 +444,203 @@
         } else {
             alert("Invalid credentials!");
         }
+    };
+
+    // ======================== ENHANCED WEEKLY COMMISSION REPORT ========================
+    function renderWeeklyCommissionReport() {
+        if(showLogin) return renderLogin();
+        recalculateStaffCommissions();
+
+        const now = new Date();
+        const currentWeekStart = new Date(now);
+        currentWeekStart.setDate(now.getDate() - now.getDay());
+        const weekStartStr = currentWeekStart.toISOString().slice(0,10);
+        const weekEnd = new Date(currentWeekStart);
+        weekEnd.setDate(currentWeekStart.getDate() + 6);
+        const weekEndStr = weekEnd.toISOString().slice(0,10);
+
+        const weekTx = appData.transactions.filter(t => t.date >= weekStartStr && t.date <= weekEndStr);
+        
+        // Compute weekly breakdown per staff
+        const weekStaffMap = {};
+        appData.staff.forEach(s => {
+            weekStaffMap[s.id] = {
+                name: s.name,
+                position: s.position,
+                tier: s.commissionTier,
+                jobs: 0,
+                sales: 0,
+                sunday: 0, monday: 0, tuesday: 0, wednesday: 0, thursday: 0, friday: 0, saturday: 0,
+                total: 0,
+                part1: 0, // Sun-Tue
+                part2: 0  // Wed-Sat
+            };
+        });
+
+        weekTx.forEach(t => {
+            if (t.staffCommissions) {
+                const txDate = new Date(t.date);
+                const dayName = ['Sunday','Monday','Tuesday','Wednesday','Thursday','Friday','Saturday'][txDate.getDay()];
+                Object.entries(t.staffCommissions).forEach(([staffId, data]) => {
+                    const staffIdNum = parseInt(staffId);
+                    if (weekStaffMap[staffIdNum]) {
+                        const comm = data.commission || 0;
+                        weekStaffMap[staffIdNum].jobs += (data.jobs || 1);
+                        weekStaffMap[staffIdNum].sales += (t.total || 0);
+                        weekStaffMap[staffIdNum].total += comm;
+                        weekStaffMap[staffIdNum][dayName.toLowerCase()] = (weekStaffMap[staffIdNum][dayName.toLowerCase()] || 0) + comm;
+                    }
+                });
+            }
+        });
+
+        // Compute part totals
+        Object.values(weekStaffMap).forEach(s => {
+            s.part1 = (s.sunday || 0) + (s.monday || 0) + (s.tuesday || 0);
+            s.part2 = (s.wednesday || 0) + (s.thursday || 0) + (s.friday || 0) + (s.saturday || 0);
+        });
+
+        let tableRows = '';
+        let grandTotal = 0;
+        let grandJobs = 0;
+        let grandSales = 0;
+        Object.values(weekStaffMap).forEach(s => {
+            grandTotal += s.total;
+            grandJobs += s.jobs;
+            grandSales += s.sales;
+            tableRows += `<tr class="border-b border-gray-700 hover:bg-gray-800 transition">
+                <td class="py-2 font-semibold">${s.name}</td>
+                <td>${s.position}</td>
+                <td class="text-center"><span class="commission-badge">${s.tier}%</span></td>
+                <td class="text-center">${s.jobs}</td>
+                <td class="text-right">₱${s.sales.toFixed(2)}</td>
+                <td class="text-center text-cyan-300">₱${(s.sunday||0).toFixed(2)}</td>
+                <td class="text-center text-cyan-300">₱${(s.monday||0).toFixed(2)}</td>
+                <td class="text-center text-cyan-300">₱${(s.tuesday||0).toFixed(2)}</td>
+                <td class="text-center text-cyan-300">₱${(s.wednesday||0).toFixed(2)}</td>
+                <td class="text-center text-cyan-300">₱${(s.thursday||0).toFixed(2)}</td>
+                <td class="text-center text-cyan-300">₱${(s.friday||0).toFixed(2)}</td>
+                <td class="text-center text-cyan-300">₱${(s.saturday||0).toFixed(2)}</td>
+                <td class="text-center text-yellow-400 font-bold">₱${s.part1.toFixed(2)}</td>
+                <td class="text-center text-yellow-400 font-bold">₱${s.part2.toFixed(2)}</td>
+                <td class="text-center text-green-400 font-bold">₱${s.total.toFixed(2)}</td>
+            </tr>`;
+        });
+
+        return `<div class="card-premium p-6">
+            <div class="flex justify-between items-center mb-4">
+                <div>
+                    <h3 class="text-2xl font-bold"><i class="fas fa-calendar-week"></i> Weekly Commission Report</h3>
+                    <p class="text-sm text-gray-400">${weekStartStr} to ${weekEndStr}</p>
+                </div>
+                <div class="flex gap-2 flex-wrap">
+                    <button onclick="exportWeeklyCommissionExcel()" class="excel-export-btn px-4 py-2 rounded text-sm text-white"><i class="fas fa-file-excel"></i> Export Excel</button>
+                    <button onclick="printWeeklyCommission()" class="bg-cyan-600 px-4 py-2 rounded text-sm"><i class="fas fa-print"></i> Print</button>
+                </div>
+            </div>
+            <div class="overflow-x-auto max-h-96 overflow-y-auto">
+                <table class="w-full text-sm commission-summary-table">
+                    <thead class="sticky top-0 bg-gray-900 border-b-2 border-cyan-400">
+                        <tr>
+                            <th class="text-left">Staff</th><th class="text-left">Position</th><th class="text-center">Tier</th>
+                            <th class="text-center">Jobs</th><th class="text-right">Sales</th>
+                            <th class="text-center">Sun</th><th class="text-center">Mon</th><th class="text-center">Tue</th>
+                            <th class="text-center">Wed</th><th class="text-center">Thu</th><th class="text-center">Fri</th><th class="text-center">Sat</th>
+                            <th class="text-center text-yellow-400">Sun-Tue</th>
+                            <th class="text-center text-yellow-400">Wed-Sat</th>
+                            <th class="text-center text-green-400">Grand Total</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        ${tableRows || '<tr><td colspan="15" class="text-center py-4 text-gray-400">No data for this week</td></tr>'}
+                        <tr class="border-t-2 border-cyan-400 bg-gray-800 font-bold">
+                            <td colspan="3" class="py-2 text-right">TOTALS:</td>
+                            <td class="text-center">${grandJobs}</td>
+                            <td class="text-right">₱${grandSales.toFixed(2)}</td>
+                            <td colspan="7"></td>
+                            <td class="text-center text-yellow-400">₱${Object.values(weekStaffMap).reduce((s, item) => s + item.part1, 0).toFixed(2)}</td>
+                            <td class="text-center text-yellow-400">₱${Object.values(weekStaffMap).reduce((s, item) => s + item.part2, 0).toFixed(2)}</td>
+                            <td class="text-center text-green-400">₱${grandTotal.toFixed(2)}</td>
+                        </tr>
+                    </tbody>
+                </table>
+            </div>
+        </div>`;
+    }
+
+    window.exportWeeklyCommissionExcel = () => {
+        const wb = XLSX.utils.book_new();
+        const now = new Date();
+        const weekStart = new Date(now);
+        weekStart.setDate(now.getDate() - now.getDay());
+        const weekEnd = new Date(weekStart);
+        weekEnd.setDate(weekStart.getDate() + 6);
+        
+        let data = [
+            [`${appData.systemSettings.companyName} - Weekly Commission Report`],
+            [`Week: ${weekStart.toISOString().slice(0,10)} to ${weekEnd.toISOString().slice(0,10)}`],
+            [],
+            ['Staff Name', 'Position', 'Tier', 'Jobs', 'Sales', 'Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sun-Tue Total', 'Wed-Sat Total', 'Grand Total']
+        ];
+
+        recalculateStaffCommissions();
+        const weekTx = appData.transactions.filter(t => t.date >= weekStart.toISOString().slice(0,10) && t.date <= weekEnd.toISOString().slice(0,10));
+        const weekStaffMap = {};
+        appData.staff.forEach(s => {
+            weekStaffMap[s.id] = { name: s.name, position: s.position, tier: s.commissionTier, jobs: 0, sales: 0, sunday:0, monday:0, tuesday:0, wednesday:0, thursday:0, friday:0, saturday:0, total:0 };
+        });
+        weekTx.forEach(t => {
+            if (t.staffCommissions) {
+                const txDate = new Date(t.date);
+                const dayName = ['Sunday','Monday','Tuesday','Wednesday','Thursday','Friday','Saturday'][txDate.getDay()].toLowerCase();
+                Object.entries(t.staffCommissions).forEach(([staffId, data]) => {
+                    const s = weekStaffMap[parseInt(staffId)];
+                    if (s) {
+                        const comm = data.commission || 0;
+                        s.jobs += (data.jobs || 1);
+                        s.sales += (t.total || 0);
+                        s.total += comm;
+                        s[dayName] = (s[dayName] || 0) + comm;
+                    }
+                });
+            }
+        });
+
+        Object.values(weekStaffMap).forEach(s => {
+            const part1 = (s.sunday||0)+(s.monday||0)+(s.tuesday||0);
+            const part2 = (s.wednesday||0)+(s.thursday||0)+(s.friday||0)+(s.saturday||0);
+            data.push([s.name, s.position, `${s.tier}%`, s.jobs, s.sales.toFixed(2), 
+                (s.sunday||0).toFixed(2), (s.monday||0).toFixed(2), (s.tuesday||0).toFixed(2),
+                (s.wednesday||0).toFixed(2), (s.thursday||0).toFixed(2), (s.friday||0).toFixed(2), (s.saturday||0).toFixed(2),
+                part1.toFixed(2), part2.toFixed(2), s.total.toFixed(2)]);
+        });
+
+        const ws = XLSX.utils.aoa_to_sheet(data);
+        ws['!cols'] = data[0].map(() => ({ wch: 14 }));
+        XLSX.utils.book_append_sheet(wb, ws, 'Weekly Commission');
+        XLSX.writeFile(wb, `weekly_commission_${weekStart.toISOString().slice(0,10)}.xlsx`);
+        alert('✅ Weekly Commission exported!');
+    };
+
+    window.printWeeklyCommission = () => {
+        const printContent = document.querySelector('.card-premium').cloneNode(true);
+        const win = window.open('', '_blank');
+        const logoHtml = appData.systemSettings.companyLogo ? 
+            `<div class="center"><img src="${appData.systemSettings.companyLogo}" style="max-width:100px;max-height:70px;object-fit:contain;"></div>` : '';
+        win.document.write(`<html><head><title>Weekly Commission</title><style>
+            body{font-family:monospace;padding:20px;background:white;color:black;}
+            .center{text-align:center;}
+            table{width:100%;border-collapse:collapse;font-size:10px;}
+            th,td{border:1px solid #ddd;padding:4px;text-align:center;}
+            th{background:#f0f0f0;}
+            .header{margin-bottom:20px;}
+        </style></head><body>
+            ${logoHtml}
+            <div class="header"><h2>${appData.systemSettings.companyName}</h2><p>Weekly Commission Report</p></div>
+            ${printContent.innerHTML}
+        </body></html>`);
+        win.document.close();
+        win.print();
     };
 
     // ======================== REPORT SUMMARIES WITH CALENDAR ========================
@@ -463,11 +682,9 @@
         const monthName = today.toLocaleString('default', { month: 'long', year: 'numeric' });
         
         let calendarHtml = '';
-        // Empty cells for first week
         for (let i = 0; i < firstDay; i++) {
             calendarHtml += `<div class="calendar-day"></div>`;
         }
-        // Days of the month
         for (let d = 1; d <= daysInMonth; d++) {
             const dateStr = `${currentYear}-${String(currentMonth+1).padStart(2,'0')}-${String(d).padStart(2,'0')}`;
             const hasSales = appData.transactions.some(t => t.date.startsWith(dateStr));
@@ -479,29 +696,10 @@
             calendarHtml += `<div class="${classes}" title="${dateStr}: ₱${daySales.toFixed(2)}">${d}</div>`;
         }
         
-        // Commission Calendar
-        let commissionCalendarHtml = '';
-        for (let i = 0; i < firstDay; i++) {
-            commissionCalendarHtml += `<div class="calendar-day"></div>`;
-        }
-        for (let d = 1; d <= daysInMonth; d++) {
-            const dateStr = `${currentYear}-${String(currentMonth+1).padStart(2,'0')}-${String(d).padStart(2,'0')}`;
-            const hasCommission = appData.transactions.some(t => t.date.startsWith(dateStr) && t.staffCommissions);
-            const isToday = d === today.getDate() && currentMonth === today.getMonth() && currentYear === today.getFullYear();
-            let classes = 'calendar-day';
-            if (hasCommission) classes += ' has-commission';
-            if (isToday) classes += ' today';
-            const dayCommission = appData.transactions.filter(t => t.date.startsWith(dateStr) && t.staffCommissions)
-                .reduce((sum, t) => sum + Object.values(t.staffCommissions).reduce((s, st) => s + (st.commission || 0), 0), 0);
-            commissionCalendarHtml += `<div class="${classes}" title="${dateStr}: ₱${dayCommission.toFixed(2)}">${d}</div>`;
-        }
-
         return `<div class="grid lg:grid-cols-2 gap-6">
-            <!-- Report Summaries -->
             <div class="card-premium p-6">
                 <h2 class="text-2xl font-bold mb-4"><i class="fas fa-chart-line"></i> Report Summaries</h2>
                 
-                <!-- Period Selector -->
                 <div class="flex gap-2 mb-4 flex-wrap">
                     <button onclick="setReportPeriod('daily')" class="px-3 py-1 rounded ${reportPeriod === 'daily' ? 'bg-cyan-600' : 'bg-gray-700'} text-sm">Daily</button>
                     <button onclick="setReportPeriod('weekly')" class="px-3 py-1 rounded ${reportPeriod === 'weekly' ? 'bg-cyan-600' : 'bg-gray-700'} text-sm">Weekly</button>
@@ -509,7 +707,6 @@
                     <button onclick="setReportPeriod('yearly')" class="px-3 py-1 rounded ${reportPeriod === 'yearly' ? 'bg-cyan-600' : 'bg-gray-700'} text-sm">Yearly</button>
                 </div>
                 
-                <!-- Summary Cards -->
                 <div class="grid grid-cols-2 gap-3 mb-4">
                     <div class="bg-gray-800 p-3 rounded-lg text-center">
                         <div class="stat-label">${reportPeriod === 'daily' ? 'Today' : reportPeriod === 'weekly' ? 'This Week' : reportPeriod === 'monthly' ? 'This Month' : 'This Year'} Sales</div>
@@ -529,7 +726,6 @@
                     </div>
                 </div>
                 
-                <!-- Calendar -->
                 <div class="bg-gray-800 p-3 rounded-lg">
                     <div class="flex justify-between items-center mb-2">
                         <span class="text-sm font-bold">${monthName}</span>
@@ -551,18 +747,15 @@
                     </div>
                 </div>
                 
-                <!-- Action Buttons -->
                 <div class="flex gap-2 mt-4 flex-wrap">
                     <button onclick="printReportSummary()" class="bg-cyan-600 px-4 py-2 rounded text-sm"><i class="fas fa-print"></i> Print Report</button>
                     <button onclick="exportReportSummaryExcel()" class="excel-export-btn px-4 py-2 rounded text-sm text-white"><i class="fas fa-file-excel"></i> Export Excel</button>
                 </div>
             </div>
             
-            <!-- Staff Commission Report -->
             <div class="card-premium p-6">
                 <h2 class="text-2xl font-bold mb-4"><i class="fas fa-file-invoice-dollar"></i> Staff Commission Report</h2>
                 
-                <!-- Summary Cards -->
                 <div class="grid grid-cols-2 gap-3 mb-4">
                     <div class="bg-gray-800 p-3 rounded-lg text-center">
                         <div class="stat-label">Total Staff</div>
@@ -574,29 +767,6 @@
                     </div>
                 </div>
                 
-                <!-- Commission Calendar -->
-                <div class="bg-gray-800 p-3 rounded-lg">
-                    <div class="flex justify-between items-center mb-2">
-                        <span class="text-sm font-bold">${monthName} - Commission Activity</span>
-                        <span class="text-xs text-gray-400">Days with commissions</span>
-                    </div>
-                    <div class="calendar-grid">
-                        <div class="calendar-header">Sun</div>
-                        <div class="calendar-header">Mon</div>
-                        <div class="calendar-header">Tue</div>
-                        <div class="calendar-header">Wed</div>
-                        <div class="calendar-header">Thu</div>
-                        <div class="calendar-header">Fri</div>
-                        <div class="calendar-header">Sat</div>
-                        ${commissionCalendarHtml}
-                    </div>
-                    <div class="flex gap-4 mt-3 text-xs">
-                        <span><span class="inline-block w-3 h-3 rounded bg-green-500/20 border border-green-500"></span> Has Commissions</span>
-                        <span><span class="inline-block w-3 h-3 rounded border border-cyan-400"></span> Today</span>
-                    </div>
-                </div>
-                
-                <!-- Staff Commission Table -->
                 <div class="mt-4 max-h-48 overflow-y-auto">
                     <table class="w-full text-sm">
                         <thead class="sticky top-0 bg-gray-900 border-b border-yellow-400">
@@ -619,7 +789,6 @@
                     </table>
                 </div>
                 
-                <!-- Action Buttons -->
                 <div class="flex gap-2 mt-4 flex-wrap">
                     <button onclick="printCommissionReport()" class="bg-cyan-600 px-4 py-2 rounded text-sm"><i class="fas fa-print"></i> Print Commission</button>
                     <button onclick="exportCommissionReportExcel()" class="excel-export-btn px-4 py-2 rounded text-sm text-white"><i class="fas fa-file-excel"></i> Export Excel</button>
@@ -633,7 +802,7 @@
         renderApp();
     };
 
-    // ======================== PRINT REPORT FUNCTIONS ========================
+    // ======================== PRINT/EXPORT FUNCTIONS ========================
     window.printReportSummary = () => {
         const printContent = document.querySelector('.card-premium').cloneNode(true);
         const win = window.open('', '_blank');
@@ -678,12 +847,10 @@
         win.print();
     };
 
-    // ======================== EXPORT FUNCTIONS ========================
     window.exportReportSummaryExcel = () => {
         const wb = XLSX.utils.book_new();
         const today = new Date();
         const monthName = today.toLocaleString('default', { month: 'long', year: 'numeric' });
-        
         let data = [
             [`${appData.systemSettings.companyName} - Report Summary`],
             [`Generated: ${new Date().toLocaleString()}`],
@@ -699,8 +866,6 @@
             ['Daily Breakdown'],
             ['Date', 'Sales', 'Expenses', 'Commission']
         ];
-        
-        // Get last 30 days
         for (let i = 29; i >= 0; i--) {
             const d = new Date(today);
             d.setDate(today.getDate() - i);
@@ -711,10 +876,8 @@
                 .reduce((sum, t) => sum + Object.values(t.staffCommissions).reduce((s, st) => s + (st.commission || 0), 0), 0);
             data.push([d.toLocaleDateString(), daySales, dayExpenses, dayCommission]);
         }
-        
         const ws = XLSX.utils.aoa_to_sheet(data);
-        const colWidths = data[0].map((_, i) => ({ wch: 20 }));
-        ws['!cols'] = colWidths;
+        ws['!cols'] = data[0].map(() => ({ wch: 20 }));
         XLSX.utils.book_append_sheet(wb, ws, 'Report Summary');
         XLSX.writeFile(wb, `report_summary_${new Date().toISOString().slice(0,10)}.xlsx`);
         alert('✅ Report Summary exported to Excel!');
@@ -735,10 +898,8 @@
              appData.staff.reduce((sum, s) => sum + (s.salesGenerated || 0), 0), 
              appData.staff.reduce((sum, s) => sum + (s.totalCommission || 0), 0)]
         ];
-        
         const ws = XLSX.utils.aoa_to_sheet(data);
-        const colWidths = data[0].map((_, i) => ({ wch: 20 }));
-        ws['!cols'] = colWidths;
+        ws['!cols'] = data[0].map(() => ({ wch: 20 }));
         XLSX.utils.book_append_sheet(wb, ws, 'Commission Report');
         XLSX.writeFile(wb, `commission_report_${new Date().toISOString().slice(0,10)}.xlsx`);
         alert('✅ Commission Report exported to Excel!');
@@ -791,32 +952,32 @@
         
         <!-- Stats Cards -->
         <div class="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-3 mb-6">
-            <div class="stat-card text-center">
+            <div class="stat-card text-center bg-gray-800 p-3 rounded-lg">
                 <div class="stat-label">Today's Sales</div>
                 <div class="stat-number text-green-400">₱${dailySales.toFixed(2)}</div>
                 <div class="text-xs text-gray-500">${todayTx.length} transactions</div>
             </div>
-            <div class="stat-card text-center">
+            <div class="stat-card text-center bg-gray-800 p-3 rounded-lg">
                 <div class="stat-label">Weekly Sales</div>
                 <div class="stat-number text-cyan-400">₱${weeklySales.toFixed(2)}</div>
                 <div class="text-xs text-gray-500">${weekTx.length} transactions</div>
             </div>
-            <div class="stat-card text-center">
+            <div class="stat-card text-center bg-gray-800 p-3 rounded-lg">
                 <div class="stat-label">Monthly Sales</div>
                 <div class="stat-number text-yellow-400">₱${monthlySales.toFixed(2)}</div>
                 <div class="text-xs text-gray-500">${monthTx.length} transactions</div>
             </div>
-            <div class="stat-card text-center">
+            <div class="stat-card text-center bg-gray-800 p-3 rounded-lg">
                 <div class="stat-label">Today's Expenses</div>
                 <div class="stat-number text-red-400">₱${dailyExpenses.toFixed(2)}</div>
                 <div class="text-xs text-gray-500">${appData.expenses.filter(e=>e.date===today).length} entries</div>
             </div>
-            <div class="stat-card text-center">
+            <div class="stat-card text-center bg-gray-800 p-3 rounded-lg">
                 <div class="stat-label">Today's Commission</div>
                 <div class="stat-number text-purple-400">₱${dailyCommission.toFixed(2)}</div>
                 <div class="text-xs text-gray-500">${appData.staff.length} staff</div>
             </div>
-            <div class="stat-card text-center">
+            <div class="stat-card text-center bg-gray-800 p-3 rounded-lg">
                 <div class="stat-label">Open Services</div>
                 <div class="stat-number text-orange-400">${openCount}</div>
                 <div class="text-xs text-gray-500">${lowStock} low stock items</div>
@@ -1354,6 +1515,7 @@
     // ======================== STAFF FUNCTIONS ========================
     function renderStaffDashboard() {
         if(showLogin) return renderLogin();
+        recalculateStaffCommissions();
         const totalCommission = appData.staff.reduce((s, st) => s + (st.totalCommission || 0), 0);
         const totalJobs = appData.staff.reduce((s, st) => s + (st.jobsCompleted || 0), 0);
         const totalSales = appData.staff.reduce((s, st) => s + (st.salesGenerated || 0), 0);
@@ -1539,6 +1701,7 @@
             { id: 'reports', icon: 'fa-chart-pie', label: 'Report Summaries' },
             { id: 'dashboard', icon: 'fa-tachometer-alt', label: 'Dashboard' },
             { id: 'transactions', icon: 'fa-receipt', label: 'Transactions' },
+            { id: 'weeklycommission', icon: 'fa-calendar-week', label: 'Weekly Commission' },
             { id: 'services', icon: 'fa-concierge-bell', label: 'Services' },
             { id: 'categories', icon: 'fa-tags', label: 'Categories' },
             { id: 'staff', icon: 'fa-users', label: 'Staff' },
@@ -1554,6 +1717,7 @@
         if(currentAdminPanel === 'reports') content = renderReportSummaries();
         else if(currentAdminPanel === 'dashboard') content = renderDashboard();
         else if(currentAdminPanel === 'transactions') content = renderAdminTransactions();
+        else if(currentAdminPanel === 'weeklycommission') content = renderWeeklyCommissionReport();
         else if(currentAdminPanel === 'services') content = renderAdminServices();
         else if(currentAdminPanel === 'categories') content = renderAdminCategories();
         else if(currentAdminPanel === 'staff') content = renderStaffDashboard();
@@ -1577,14 +1741,14 @@
                         <div>TX: ${appData.transactions.length}</div>
                     </div>
                     <div class="mt-2 text-cyan-400 text-[10px]">Last Saved: ${new Date().toLocaleTimeString()}</div>
-                    <div class="mt-1 text-green-400 text-[10px]">📊 Report Summaries with Calendar</div>
+                    <div class="mt-1 text-green-400 text-[10px]">📊 v8.1 - Weekly Commission Report</div>
                 </div>
             </div>
             <div class="admin-content card-premium p-5">${content}</div>
         </div>`;
     }
 
-    // ======================== ADMIN - TRANSACTIONS ========================
+    // ======================== ADMIN - TRANSACTIONS (REALTIME COMMISSION UPDATE) ========================
     function renderAdminTransactions() {
         if(showLogin) return renderLogin();
         recalculateStaffCommissions();
@@ -1718,7 +1882,7 @@
     };
 
     window.deleteTransactionAndCommission = (id) => {
-        if (!confirm("Delete this transaction? This will also remove associated commissions.")) return;
+        if (!confirm("Delete this transaction? This will remove associated commissions.")) return;
 
         const txIndex = appData.transactions.findIndex(t => t.id === id);
         if (txIndex === -1) return;
@@ -2233,13 +2397,13 @@
             </div>
             <div class="mt-4 p-3 bg-gray-800 rounded-lg text-xs">
                 <div class="text-gray-400">System Info</div>
-                <div>Version: 8.0 Enterprise | Last Saved: ${localStorage.getItem('8068_system_last_saved') ? new Date(localStorage.getItem('8068_system_last_saved')).toLocaleString() : 'Never'}</div>
+                <div>Version: 8.1 Enterprise | Last Saved: ${localStorage.getItem('8068_system_last_saved') ? new Date(localStorage.getItem('8068_system_last_saved')).toLocaleString() : 'Never'}</div>
                 <div>Records: ${appData.transactions.length} TX | ${appData.customers.length} Customers | ${appData.staff.length} Staff</div>
                 <div>Commission Entries: ${Object.keys(appData.commissionMatrix || {}).length}</div>
                 <div>Open Services: ${appData.openServices.filter(s=>s.status!=='completed').length}</div>
                 <div>Receipt: 58mm Thermal with Auto-Cut</div>
-                <div class="mt-1 text-green-400">📊 Report Summaries with Calendar</div>
-                <div class="mt-1 text-cyan-400">📅 Daily/Weekly/Monthly/Yearly Reports</div>
+                <div class="mt-1 text-green-400">📊 Enhanced Weekly Commission Report</div>
+                <div class="mt-1 text-cyan-400">📅 Real-time commission updates on edit/delete</div>
             </div>
         </div>`;
     }
@@ -2361,7 +2525,7 @@
             <div class="flex flex-wrap justify-between items-center border-b border-blue-800 pb-4 mb-6">
                 <div class="flex items-center gap-3">
                     ${appData.systemSettings.companyLogo ? `<img src="${appData.systemSettings.companyLogo}" class="company-logo" alt="Logo">` : ''}
-                    <div><h1 class="text-3xl font-extrabold glow-text">${appData.systemSettings.companyName}</h1><p class="text-sm text-gray-400">${appData.systemSettings.tagline} | v8.0</p></div>
+                    <div><h1 class="text-3xl font-extrabold glow-text">${appData.systemSettings.companyName}</h1><p class="text-sm text-gray-400">${appData.systemSettings.tagline} | v8.1</p></div>
                 </div>
                 <div class="flex gap-2 flex-wrap mt-2">
                     <button onclick="navigate('dashboard')" class="px-3 py-2 bg-gray-900 rounded-lg neon-border text-sm"><i class="fas fa-chart-line"></i> Dashboard</button>
@@ -2374,15 +2538,15 @@
                 </div>
             </div>
             <div id="mainContent"></div>
-            <footer class="text-center text-gray-500 text-sm mt-12 pt-4 border-t border-gray-800">${appData.systemSettings.companyName} | 58mm Receipt | Auto-Cut | v8.0</footer>
+            <footer class="text-center text-gray-500 text-sm mt-12 pt-4 border-t border-gray-800">${appData.systemSettings.companyName} | 58mm Receipt | Auto-Cut | v8.1</footer>
         </div>
     `;
     renderApp();
     saveToLocal();
 
-    console.log('%c8068 CAR SQUARE - Enterprise Management System v8.0', 'color: #00d4ff; font-size: 20px; font-weight: bold;');
+    console.log('%c8068 CAR SQUARE - Enterprise Management System v8.1', 'color: #00d4ff; font-size: 20px; font-weight: bold;');
     console.log(`%cRecords: ${appData.transactions.length} TX | ${appData.customers.length} Customers | ${appData.staff.length} Staff`, 'color: #00ff88;');
-    console.log('%c📊 Report Summaries with Calendar | 📅 Daily/Weekly/Monthly/Yearly Reports', 'color: #ffaa00;');
+    console.log('%c📊 Enhanced Weekly Commission Report | Real-time updates on edit/delete', 'color: #ffaa00;');
 </script>
 </body>
 </html>
