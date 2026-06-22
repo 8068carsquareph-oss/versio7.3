@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=yes">
-    <title>8068 CAR SQUARE | POS System v7.6</title>
+    <title>8068 CAR SQUARE | POS System v7.7</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
@@ -44,6 +44,7 @@
         .status-pending { background: #ffaa0033; color: #ffaa00; }
         .status-in-progress { background: #00d4ff33; color: #00d4ff; }
         .status-completed { background: #00ff8833; color: #00ff88; }
+        .status-paid { background: #8888ff33; color: #8888ff; }
         .commission-item { animation: slideIn 0.3s ease; }
         @keyframes slideIn {
             from { opacity: 0; transform: translateX(-10px); }
@@ -66,6 +67,11 @@
         .day-col { min-width: 70px; text-align: center; }
         .split-total { background: rgba(0,212,255,0.1); }
         .monthly-grand { background: rgba(0,255,136,0.1); }
+        .commission-update { animation: flashGreen 0.5s ease; }
+        @keyframes flashGreen {
+            0% { background: rgba(0,255,136,0.4); }
+            100% { background: transparent; }
+        }
         @media print {
             .no-print { display: none; }
             .receipt-58mm { width: 58mm; margin: 0; padding: 4px; }
@@ -168,7 +174,8 @@
         ],
         currentUser: null,
         nextIds: { transaction: 100, customer: 50, expense: 20, service: 50, openService: 1 },
-        commissionMatrix: initializeCommissionMatrix()
+        commissionMatrix: initializeCommissionMatrix(),
+        weeklyCommissionCache: null
     };
 
     function getDescription(name) {
@@ -199,7 +206,7 @@
         return "Specialty";
     }
 
-    const saved = localStorage.getItem("8068_enterprise_v7_6");
+    const saved = localStorage.getItem("8068_enterprise_v7_7");
     if(saved) {
         try {
             const parsed = JSON.parse(saved);
@@ -223,8 +230,10 @@
     }
 
     function saveToLocal() {
-        localStorage.setItem("8068_enterprise_v7_6", JSON.stringify(appData));
+        localStorage.setItem("8068_enterprise_v7_7", JSON.stringify(appData));
         localStorage.setItem("8068_system_last_saved", new Date().toISOString());
+        // Clear cache when data changes
+        appData.weeklyCommissionCache = null;
     }
 
     function getCommissionAmount(serviceName, size, tierPercent) {
@@ -364,8 +373,8 @@
                     ${appData.systemSettings.companyLogo ? `<img src="${appData.systemSettings.companyLogo}" class="mx-auto max-h-20 mb-4">` : ''}
                     <h2 class="text-3xl font-bold glow-text">${appData.systemSettings.companyName}</h2>
                     <p class="text-gray-400 text-sm">${appData.systemSettings.tagline}</p>
-                    <p class="text-cyan-400 text-xs mt-2">Enterprise POS System v7.6</p>
-                    <p class="text-xs text-gray-500 mt-1"><i class="fas fa-print"></i> 58mm Receipt | Auto-Cut</p>
+                    <p class="text-cyan-400 text-xs mt-2">Enterprise POS System v7.7</p>
+                    <p class="text-xs text-green-400 mt-1"><i class="fas fa-sync"></i> Auto-Commission Updates</p>
                 </div>
                 <div class="space-y-4">
                     <div><label class="text-gray-400">Username</label><input type="text" id="loginUser" class="w-full bg-gray-800 p-3 rounded border border-gray-700" placeholder="Enter username" value="owner"></div>
@@ -385,13 +394,20 @@
         const pass = document.getElementById('loginPass')?.value;
         if(login(user, pass)) {
             alert(`Welcome ${appData.currentUser.name}! (${appData.currentUser.role})`);
+            // Refresh weekly commission cache on login
+            appData.weeklyCommissionCache = null;
         } else {
             alert("Invalid credentials!");
         }
     };
 
-    // ======================== ENHANCED WEEKLY COMMISSION REPORT ========================
+    // ======================== ENHANCED WEEKLY COMMISSION REPORT WITH AUTO-UPDATE ========================
     function generateWeeklyCommissionReport() {
+        // Check cache first
+        if (appData.weeklyCommissionCache) {
+            return appData.weeklyCommissionCache;
+        }
+
         const today = new Date();
         const currentDay = today.getDay(); // 0=Sunday, 1=Monday, etc.
         const weekStart = new Date(today);
@@ -468,7 +484,9 @@
         totals.wedToSat = reportData.reduce((sum, s) => sum + s.wedToSat, 0);
         totals.monthlyGrand = reportData.reduce((sum, s) => sum + s.monthlyGrand, 0);
 
-        return { reportData, totals, weekStart, weekEnd, dayNames };
+        // Cache the result
+        appData.weeklyCommissionCache = { reportData, totals, weekStart, weekEnd, dayNames };
+        return appData.weeklyCommissionCache;
     }
 
     function renderWeeklyCommissionReport() {
@@ -492,11 +510,15 @@
 
         return `<div class="card-premium p-6">
             <div class="flex justify-between items-center mb-4">
-                <h2 class="text-2xl font-bold"><i class="fas fa-calendar-week"></i> Weekly Commission Report</h2>
+                <div>
+                    <h2 class="text-2xl font-bold"><i class="fas fa-calendar-week"></i> Weekly Commission Report</h2>
+                    <p class="text-xs text-green-400 mt-1"><i class="fas fa-sync"></i> Auto-updated when services are completed</p>
+                </div>
                 <div class="flex gap-2 flex-wrap">
                     <span class="text-sm text-gray-400">Week: ${weekStart.toLocaleDateString()} - ${weekEnd.toLocaleDateString()}</span>
                     <button onclick="exportWeeklyCommissionExcel()" class="excel-export-btn px-4 py-2 rounded text-sm text-white"><i class="fas fa-file-excel"></i> Export Excel</button>
                     <button onclick="printWeeklyCommission()" class="bg-cyan-600 px-4 py-2 rounded text-sm"><i class="fas fa-print"></i> Print</button>
+                    <button onclick="refreshWeeklyCommission()" class="bg-green-600 px-4 py-2 rounded text-sm"><i class="fas fa-sync"></i> Refresh</button>
                 </div>
             </div>
             
@@ -537,6 +559,13 @@
         </div>`;
     }
 
+    window.refreshWeeklyCommission = () => {
+        appData.weeklyCommissionCache = null;
+        generateWeeklyCommissionReport();
+        renderApp();
+        alert('✅ Weekly commission report refreshed!');
+    };
+
     // ======================== EXPORT WEEKLY COMMISSION EXCEL ========================
     function exportWeeklyCommissionExcel() {
         const { reportData, totals, weekStart, weekEnd, dayNames } = generateWeeklyCommissionReport();
@@ -576,7 +605,6 @@
 
         const ws1 = XLSX.utils.aoa_to_sheet(data);
         
-        // Auto column widths
         const colWidths = [];
         for (let i = 0; i < data[0].length; i++) {
             let maxWidth = 12;
@@ -590,23 +618,16 @@
         }
         ws1['!cols'] = colWidths;
 
-        // Apply formatting - editable cells with wrap text
         const range = XLSX.utils.decode_range(ws1['!ref']);
         for (let R = range.s.r; R <= range.e.r; R++) {
             for (let C = range.s.c; C <= range.e.c; C++) {
                 const addr = XLSX.utils.encode_cell({ r: R, c: C });
                 if (!ws1[addr]) continue;
                 if (!ws1[addr].s) ws1[addr].s = {};
-                ws1[addr].s.alignment = { 
-                    wrapText: true, 
-                    vertical: 'top',
-                    horizontal: R === 0 || R === 1 || R === 2 ? 'center' : 'left'
-                };
-                // Make header rows bold
+                ws1[addr].s.alignment = { wrapText: true, vertical: 'top', horizontal: R === 0 || R === 1 || R === 2 ? 'center' : 'left' };
                 if (R === 0 || R === 1 || R === 2 || R === 4 || R === data.length - 1) {
                     ws1[addr].s.font = { bold: true };
                 }
-                // Color number cells
                 if (R > 4 && C >= 5 && C <= 11) {
                     ws1[addr].s.font = { color: { rgb: "00D4FF" } };
                 }
@@ -636,7 +657,6 @@
                 const dayData = s.dailyTotals[day] || 0;
                 const txCount = s.dailyTxCount?.[day] || 0;
                 if (dayData > 0 || txCount > 0) {
-                    // Get customers for this day (simplified)
                     const customers = appData.transactions.filter(t => {
                         const tDate = new Date(t.date);
                         return tDate.getDay() === dayNames.indexOf(day) && 
@@ -701,8 +721,6 @@
             .header{margin-bottom:20px;}
             .text-center{text-align:center;}
             .text-right{text-align:right;}
-            .text-yellow{color:#b8860b;}
-            .text-green{color:#006400;}
         </style></head><body>
             ${logoHtml}
             <div class="header"><h2>${appData.systemSettings.companyName}</h2><p>Weekly Commission Report</p></div>
@@ -712,7 +730,7 @@
         win.print();
     };
 
-    // ======================== OPEN SERVICES ========================
+    // ======================== OPEN SERVICES WITH AUTO-COMMISSION ========================
     function createOpenService(customer, vehicle, plate, items, staff, total, remarks) {
         const openService = {
             id: "OS-" + new Date().getFullYear() + "-" + (appData.nextIds.openService++),
@@ -726,7 +744,8 @@
             status: 'pending',
             createdAt: new Date().toISOString(),
             completedAt: null,
-            paidAt: null
+            paidAt: null,
+            commissionProcessed: false // Track if commission has been processed
         };
         appData.openServices.push(openService);
         saveToLocal();
@@ -739,10 +758,122 @@
             service.status = status;
             if(status === 'completed') {
                 service.completedAt = new Date().toISOString();
+                // Auto-generate commission when service is completed
+                processOpenServiceCommission(service);
             }
             saveToLocal();
+            // Clear cache so weekly report updates
+            appData.weeklyCommissionCache = null;
             renderApp();
         }
+    }
+
+    // ======================== AUTO-COMMISSION PROCESSING ========================
+    function processOpenServiceCommission(service) {
+        if (service.commissionProcessed) {
+            console.log('Commission already processed for this service:', service.id);
+            return;
+        }
+
+        if (!service.staff || service.staff.length === 0) {
+            console.log('No staff assigned, skipping commission:', service.id);
+            return;
+        }
+
+        // Calculate commission for each staff member
+        const staffCommissionMap = new Map();
+        service.items.forEach(item => {
+            if (item.assignedStaff && item.assignedStaff.length > 0) {
+                item.assignedStaff.forEach(staff => {
+                    // Calculate commission based on the service price and staff tier
+                    const commissionAmt = getCommissionAmount(item.serviceName, item.variant, staff.commissionTier);
+                    const splitCommission = item.assignedStaff.length === 2 ? commissionAmt / 2 : commissionAmt;
+                    
+                    const current = staffCommissionMap.get(staff.id) || { 
+                        commission: 0, 
+                        jobs: 0, 
+                        name: staff.name, 
+                        tier: staff.commissionTier,
+                        serviceTotal: 0
+                    };
+                    current.commission += splitCommission;
+                    current.jobs += 1;
+                    current.serviceTotal += item.total;
+                    staffCommissionMap.set(staff.id, current);
+                });
+            }
+        });
+
+        // Create a transaction entry for the open service
+        const transaction = {
+            id: "OS-" + generateReceiptNo(),
+            date: service.completedAt || new Date().toISOString(),
+            customer: service.customer,
+            vehicle: service.vehicle,
+            plate: service.plate,
+            items: service.items.map(i => ({ ...i })),
+            staffCommissions: Object.fromEntries([...staffCommissionMap.entries()].map(([id, data]) => [id, { 
+                commission: data.commission, 
+                tier: data.tier, 
+                name: data.name,
+                jobs: data.jobs
+            }])),
+            subtotal: service.total,
+            discount: 0,
+            loyaltyUsed: 0,
+            total: service.total,
+            paymentMethod: 'Open Service',
+            cashTendered: service.total,
+            change: 0,
+            remarks: service.remarks + ' (Completed Service)',
+            isOpenService: true,
+            openServiceId: service.id,
+            isCommissionAutoGenerated: true
+        };
+
+        // Add to transactions
+        appData.transactions.unshift(transaction);
+
+        // Update staff records
+        staffCommissionMap.forEach((data, staffId) => {
+            const staffMember = appData.staff.find(s => s.id === staffId);
+            if(staffMember) {
+                staffMember.totalCommission = (staffMember.totalCommission || 0) + data.commission;
+                staffMember.jobsCompleted = (staffMember.jobsCompleted || 0) + data.jobs;
+                staffMember.salesGenerated = (staffMember.salesGenerated || 0) + data.serviceTotal;
+            }
+        });
+
+        // Mark as processed
+        service.commissionProcessed = true;
+        service.transactionId = transaction.id;
+
+        // Clear cache for weekly report
+        appData.weeklyCommissionCache = null;
+        saveToLocal();
+
+        console.log(`✅ Commission auto-generated for service ${service.id}:`, staffCommissionMap);
+        return transaction;
+    }
+
+    // Process all completed services that haven't had commission processed
+    function processPendingCommissions() {
+        const pendingServices = appData.openServices.filter(s => 
+            s.status === 'completed' && !s.commissionProcessed
+        );
+        
+        if (pendingServices.length === 0) {
+            return;
+        }
+
+        pendingServices.forEach(service => {
+            processOpenServiceCommission(service);
+        });
+
+        saveToLocal();
+        appData.weeklyCommissionCache = null;
+        alert(`✅ Processed ${pendingServices.length} pending service commission(s)!`);
+        renderApp();
     }
 
     function completeOpenServicePayment(id, paymentMethod, cashTendered) {
@@ -753,6 +884,11 @@
         if(paymentMethod === "Cash" && cashTendered < total) {
             alert("Insufficient cash!");
             return;
+        }
+        
+        // If commission hasn't been processed yet, process it now
+        if (!service.commissionProcessed && service.status === 'completed') {
+            processOpenServiceCommission(service);
         }
         
         const transaction = {
@@ -778,22 +914,12 @@
         service.paidAt = new Date().toISOString();
         service.status = 'paid';
         
-        if(service.staff && service.staff.length > 0) {
-            service.staff.forEach(staff => {
-                const staffMember = appData.staff.find(s => s.id === staff.id);
-                if(staffMember) {
-                    staffMember.totalCommission = (staffMember.totalCommission || 0) + (staff.splitCommission || 0);
-                    staffMember.jobsCompleted = (staffMember.jobsCompleted || 0) + 1;
-                    staffMember.salesGenerated = (staffMember.salesGenerated || 0) + total;
-                }
-            });
-        }
-        
         saveToLocal();
         alert(`✅ Payment Completed!\nTotal: ₱${total.toFixed(2)}`);
         print58mmReceipt(transaction);
         
         appData.openServices = appData.openServices.filter(s => s.id !== id);
+        appData.weeklyCommissionCache = null;
         renderApp();
     }
 
@@ -801,6 +927,7 @@
         if(confirm("Delete this open service?")) {
             appData.openServices = appData.openServices.filter(s => s.id !== id);
             saveToLocal();
+            appData.weeklyCommissionCache = null;
             renderApp();
         }
     }
@@ -808,10 +935,21 @@
     function renderOpenServices() {
         if(showLogin) return renderLogin();
         
-        const pendingServices = appData.openServices.filter(s => s.status === 'pending' || s.status === 'in-progress');
-        const completedServices = appData.openServices.filter(s => s.status === 'completed');
+        // Process pending commissions automatically
+        const pendingServices = appData.openServices.filter(s => s.status === 'completed' && !s.commissionProcessed);
+        if (pendingServices.length > 0) {
+            // Auto-process pending commissions
+            pendingServices.forEach(service => {
+                processOpenServiceCommission(service);
+            });
+            saveToLocal();
+            appData.weeklyCommissionCache = null;
+        }
         
-        let pendingHtml = pendingServices.map(s => `
+        const pendingServicesList = appData.openServices.filter(s => s.status === 'pending' || s.status === 'in-progress');
+        const completedServicesList = appData.openServices.filter(s => s.status === 'completed' || s.status === 'paid');
+        
+        let pendingHtml = pendingServicesList.map(s => `
             <div class="open-service-card bg-gray-800 rounded-lg p-4 border border-gray-700">
                 <div class="flex justify-between items-start">
                     <div>
@@ -830,8 +968,7 @@
                             <span class="status-badge ${s.status === 'pending' ? 'status-pending' : 'status-in-progress'}">${s.status.toUpperCase()}</span>
                             <div class="flex flex-col gap-1 mt-2">
                                 <button onclick="updateOpenServiceStatus('${s.id}', 'in-progress')" class="action-btn bg-cyan-600 text-white hover:bg-cyan-700 text-xs">Start</button>
-                                <button onclick="updateOpenServiceStatus('${s.id}', 'completed')" class="action-btn bg-green-600 text-white hover:bg-green-700 text-xs">Complete</button>
-                                <button onclick="showPaymentModal('${s.id}')" class="action-btn bg-blue-600 text-white hover:bg-blue-700 text-xs">Pay</button>
+                                <button onclick="updateOpenServiceStatus('${s.id}', 'completed')" class="action-btn bg-green-600 text-white hover:bg-green-700 text-xs">Complete & Auto-Commission</button>
                                 <button onclick="deleteOpenService('${s.id}')" class="action-btn bg-red-600 text-white hover:bg-red-700 text-xs">Delete</button>
                             </div>
                         </div>
@@ -840,20 +977,22 @@
             </div>
         `).join('');
         
-        let completedHtml = completedServices.map(s => `
+        let completedHtml = completedServicesList.map(s => `
             <div class="open-service-card bg-gray-800/50 rounded-lg p-4 border border-green-800/30">
                 <div class="flex justify-between items-start">
                     <div>
                         <div class="font-bold text-lg text-green-400">${s.customer}</div>
                         <div class="text-sm text-gray-400">${s.vehicle} | ${s.plate}</div>
                         <div class="text-xs text-gray-500">Completed: ${new Date(s.completedAt).toLocaleString()}</div>
+                        ${s.commissionProcessed ? `<div class="text-xs text-green-400">✅ Commission: Processed</div>` : `<div class="text-xs text-yellow-400">⏳ Commission: Pending</div>`}
                         <div class="mt-2 space-y-1">
                             ${s.items.map(item => `<div class="text-sm"><span class="text-cyan-300">${item.serviceName}</span> (${item.variant}) x${item.quantity}</div>`).join('')}
                         </div>
                     </div>
                     <div class="text-right">
                         <div class="text-xl font-bold text-green-400">₱${s.total.toFixed(2)}</div>
-                        <span class="status-badge status-completed">COMPLETED</span>
+                        <span class="status-badge ${s.status === 'paid' ? 'status-paid' : 'status-completed'}">${s.status.toUpperCase()}</span>
+                        ${!s.commissionProcessed ? `<button onclick="updateOpenServiceStatus('${s.id}', 'completed')" class="action-btn bg-cyan-600 text-white hover:bg-cyan-700 mt-2 text-xs w-full">Process Commission</button>` : ''}
                         <button onclick="showPaymentModal('${s.id}')" class="action-btn bg-blue-600 text-white hover:bg-blue-700 mt-2 text-xs w-full">Pay</button>
                     </div>
                 </div>
@@ -862,9 +1001,13 @@
         
         return `<div class="card-premium p-6">
             <div class="flex justify-between items-center mb-4">
-                <h2 class="text-2xl font-bold"><i class="fas fa-clipboard-list"></i> Open Services Dashboard</h2>
+                <div>
+                    <h2 class="text-2xl font-bold"><i class="fas fa-clipboard-list"></i> Open Services Dashboard</h2>
+                    <p class="text-xs text-green-400 mt-1"><i class="fas fa-sync"></i> Auto-commission on completion</p>
+                </div>
                 <div class="flex gap-2">
-                    <span class="text-sm text-gray-400">Pending: ${pendingServices.length} | Completed: ${completedServices.length}</span>
+                    <span class="text-sm text-gray-400">Pending: ${pendingServicesList.length} | Completed: ${completedServicesList.length}</span>
+                    <button onclick="processPendingCommissions()" class="bg-cyan-600 px-3 py-1 rounded text-sm"><i class="fas fa-coins"></i> Process All Commissions</button>
                 </div>
             </div>
             
@@ -896,6 +1039,7 @@
             <div class="space-y-3">
                 <div><label class="text-gray-400">Customer</label><div class="bg-gray-800 p-2 rounded">${service.customer}</div></div>
                 <div><label class="text-gray-400">Total Amount</label><div class="bg-gray-800 p-2 rounded text-2xl font-bold text-green-400">₱${service.total.toFixed(2)}</div></div>
+                ${service.commissionProcessed ? `<div class="text-xs text-green-400">✅ Commission already processed</div>` : `<div class="text-xs text-yellow-400">⏳ Commission will be processed on payment</div>`}
                 <div><label class="text-gray-400">Payment Method</label><select id="payMethod" class="w-full bg-gray-800 p-2 rounded">${methodOptions}</select></div>
                 <div id="cashDiv"><label class="text-gray-400">Cash Tendered</label><input type="number" id="payCash" class="w-full bg-gray-800 p-2 rounded" placeholder="Enter amount" step="0.01"></div>
                 <div class="flex gap-3 mt-4">
@@ -1282,7 +1426,7 @@
         
         const fileName = `${reportType}_report_${new Date().toISOString().slice(0,10)}.xlsx`;
         XLSX.writeFile(wb, fileName);
-        alert(`✅ Excel report exported as: ${fileName}\n\nThis Excel file is fully editable. You can modify any data as needed.`);
+        alert(`✅ Excel report exported as: ${fileName}\n\nThis Excel file is fully editable.`);
     }
 
     function exportCommissionToExcel() {
@@ -1956,7 +2100,7 @@
         const staff = posCart.flatMap(i => i.assignedStaff || []).filter((v, i, a) => a.indexOf(v) === i);
         
         createOpenService(customer, vehicle, plate, posCart, staff, total, cartRemarks);
-        alert(`✅ Service saved as Open Service!\nTotal: ₱${total.toFixed(2)}`);
+        alert(`✅ Service saved as Open Service!\nTotal: ₱${total.toFixed(2)}\nCommission will auto-generate on completion.`);
         
         posCart = [];
         selectedCustomer = null;
@@ -1964,6 +2108,7 @@
         discount = 0;
         loyaltyPointsUsed = 0;
         cartRemarks = "";
+        appData.weeklyCommissionCache = null;
         renderApp();
     };
 
@@ -2064,6 +2209,7 @@
         alert(`✅ SALE COMPLETED!\nTotal: ₱${total.toFixed(2)}`);
         print58mmReceipt(transaction);
         posCart = []; selectedCustomer = null; vehicleInfo = { plate: "", model: "", size: "Medium" }; discount = 0; loyaltyPointsUsed = 0; cashTendered = 0; cartRemarks = "";
+        appData.weeklyCommissionCache = null;
         renderApp();
     }
 
@@ -2131,6 +2277,7 @@
                     </div>
                     <div class="mt-2 text-cyan-400 text-[10px]">Last Saved: ${new Date().toLocaleTimeString()}</div>
                     <div class="mt-1 text-gray-500 text-[10px]">👤 ${appData.currentUser?.name} (${appData.currentUser?.role})</div>
+                    <div class="mt-1 text-green-400 text-[10px]">✅ Auto-Commission Enabled</div>
                 </div>
             </div>
             <div class="admin-content card-premium p-5">${content}</div>
@@ -2655,13 +2802,13 @@
             </div>
             <div class="mt-4 p-3 bg-gray-800 rounded-lg text-xs">
                 <div class="text-gray-400">System Info</div>
-                <div>Version: 7.6 Enterprise (58mm Receipt) | Last Saved: ${localStorage.getItem('8068_system_last_saved') ? new Date(localStorage.getItem('8068_system_last_saved')).toLocaleString() : 'Never'}</div>
+                <div>Version: 7.7 Enterprise (Auto-Commission) | Last Saved: ${localStorage.getItem('8068_system_last_saved') ? new Date(localStorage.getItem('8068_system_last_saved')).toLocaleString() : 'Never'}</div>
                 <div>Records: ${appData.transactions.length} TX | ${appData.customers.length} Customers | ${appData.staff.length} Staff</div>
                 <div>Commission Entries: ${Object.keys(appData.commissionMatrix || {}).length}</div>
                 <div>Open Services: ${appData.openServices.filter(s=>s.status!=='completed').length}</div>
                 <div>Inventory Items: ${appData.inventory.length}</div>
                 <div>Receipt Format: 58mm Thermal with Auto-Cut</div>
-                <div class="mt-1 text-cyan-400">✅ Weekly Commission Report Available</div>
+                <div class="mt-1 text-green-400">✅ Auto-Commission: Enabled on service completion</div>
             </div>
         </div>`;
     }
@@ -2783,7 +2930,7 @@
             <div class="flex flex-wrap justify-between items-center border-b border-blue-800 pb-4 mb-6">
                 <div class="flex items-center gap-3">
                     ${appData.systemSettings.companyLogo ? `<img src="${appData.systemSettings.companyLogo}" class="company-logo" alt="Logo">` : ''}
-                    <div><h1 class="text-3xl font-extrabold glow-text">${appData.systemSettings.companyName}</h1><p class="text-sm text-gray-400">${appData.systemSettings.tagline} | v7.6</p></div>
+                    <div><h1 class="text-3xl font-extrabold glow-text">${appData.systemSettings.companyName}</h1><p class="text-sm text-gray-400">${appData.systemSettings.tagline} | v7.7</p></div>
                 </div>
                 <div class="flex gap-2 flex-wrap mt-2">
                     <button onclick="navigate('dashboard')" class="px-3 py-2 bg-gray-900 rounded-lg neon-border text-sm"><i class="fas fa-chart-line"></i> Dashboard</button>
@@ -2797,15 +2944,15 @@
                 </div>
             </div>
             <div id="mainContent"></div>
-            <footer class="text-center text-gray-500 text-sm mt-12 pt-4 border-t border-gray-800">${appData.systemSettings.companyName} | 58mm Receipt | Auto-Cut Enabled | v7.6</footer>
+            <footer class="text-center text-gray-500 text-sm mt-12 pt-4 border-t border-gray-800">${appData.systemSettings.companyName} | 58mm Receipt | Auto-Cut | Auto-Commission v7.7</footer>
         </div>
     `;
     renderApp();
     saveToLocal();
 
-    console.log('%c8068 CAR SQUARE - Enterprise Management System v7.6', 'color: #00d4ff; font-size: 20px; font-weight: bold;');
+    console.log('%c8068 CAR SQUARE - Enterprise Management System v7.7', 'color: #00d4ff; font-size: 20px; font-weight: bold;');
     console.log(`%cRecords: ${appData.transactions.length} TX | ${appData.customers.length} Customers | ${appData.staff.length} Staff | ${appData.openServices.filter(s=>s.status!=='completed').length} Open Services`, 'color: #00ff88;');
-    console.log('%c✅ Weekly Commission Report with daily breakdown (Sun-Sat) and split totals', 'color: #ffaa00;');
+    console.log('%c✅ Auto-Commission: Generated when services are completed', 'color: #00ff88;');
     console.log('%cReceipt Format: 58mm Thermal with Auto-Cut ✓', 'color: #ffaa00;');
 </script>
 </body>
