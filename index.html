@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=yes">
-    <title>8068 CAR SQUARE | POS System v7.7</title>
+    <title>8068 CAR SQUARE | POS System v7.8</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
@@ -24,7 +24,7 @@
         .service-btn:hover { border-color: #00d4ff; transform: translateY(-2px); background: #222; }
         .glow-text { text-shadow: 0 0 5px #00d4ff; }
         .modal { position: fixed; inset: 0; background: rgba(0,0,0,0.95); display: flex; align-items: center; justify-content: center; z-index: 1000; }
-        .modal-content { background: #1a1a1a; border-radius: 1rem; padding: 1.5rem; max-width: 800px; width: 90%; border: 1px solid #00d4ff; max-height: 85vh; overflow-y: auto; }
+        .modal-content { background: #1a1a1a; border-radius: 1rem; padding: 1.5rem; max-width: 900px; width: 90%; border: 1px solid #00d4ff; max-height: 85vh; overflow-y: auto; }
         .commission-badge { background: linear-gradient(135deg, #00d4ff20, #0077b620); border-radius: 20px; padding: 4px 12px; font-size: 12px; font-weight: bold; }
         .editable-field { cursor: pointer; transition: all 0.2s; }
         .editable-field:hover { background: rgba(0,212,255,0.15); border-radius: 8px; padding: 2px 6px; }
@@ -68,6 +68,12 @@
         .split-total { background: rgba(0,212,255,0.1); }
         .monthly-grand { background: rgba(0,255,136,0.1); }
         .commission-update { animation: flashGreen 0.5s ease; }
+        .transaction-row { transition: all 0.2s; }
+        .transaction-row:hover { background: rgba(0,212,255,0.05); }
+        .calendar-day { display: inline-block; width: 36px; height: 36px; line-height: 36px; text-align: center; border-radius: 50%; margin: 2px; font-size: 12px; }
+        .calendar-day.has-transaction { background: rgba(0,212,255,0.2); color: #00d4ff; font-weight: bold; }
+        .calendar-day.has-commission { background: rgba(0,255,136,0.2); color: #00ff88; font-weight: bold; }
+        .calendar-day.today { border: 2px solid #00d4ff; }
         @keyframes flashGreen {
             0% { background: rgba(0,255,136,0.4); }
             100% { background: transparent; }
@@ -175,7 +181,8 @@
         currentUser: null,
         nextIds: { transaction: 100, customer: 50, expense: 20, service: 50, openService: 1 },
         commissionMatrix: initializeCommissionMatrix(),
-        weeklyCommissionCache: null
+        weeklyCommissionCache: null,
+        monthlyCommissionCache: null
     };
 
     function getDescription(name) {
@@ -206,7 +213,7 @@
         return "Specialty";
     }
 
-    const saved = localStorage.getItem("8068_enterprise_v7_7");
+    const saved = localStorage.getItem("8068_enterprise_v7_8");
     if(saved) {
         try {
             const parsed = JSON.parse(saved);
@@ -230,10 +237,10 @@
     }
 
     function saveToLocal() {
-        localStorage.setItem("8068_enterprise_v7_7", JSON.stringify(appData));
+        localStorage.setItem("8068_enterprise_v7_8", JSON.stringify(appData));
         localStorage.setItem("8068_system_last_saved", new Date().toISOString());
-        // Clear cache when data changes
         appData.weeklyCommissionCache = null;
+        appData.monthlyCommissionCache = null;
     }
 
     function getCommissionAmount(serviceName, size, tierPercent) {
@@ -249,7 +256,7 @@
 
     // ======================== STATE ========================
     let currentView = "dashboard";
-    let currentAdminPanel = "services";
+    let currentAdminPanel = "transactions";
     let posCart = [];
     let selectedCustomer = null;
     let vehicleInfo = { plate: "", model: "", size: "Medium" };
@@ -262,18 +269,83 @@
 
     function generateReceiptNo() { return "INV-" + new Date().getFullYear() + "-" + (appData.nextIds.transaction++); }
 
-    // ======================== 58MM RECEIPT WITH AUTO-CUT ========================
+    // ======================== RECALCULATE STAFF COMMISSIONS ========================
+    function recalculateStaffCommissions() {
+        // Reset all staff commissions
+        appData.staff.forEach(s => {
+            s.totalCommission = 0;
+            s.jobsCompleted = 0;
+            s.salesGenerated = 0;
+        });
+
+        // Recalculate from all transactions
+        appData.transactions.forEach(t => {
+            if (t.staffCommissions) {
+                Object.entries(t.staffCommissions).forEach(([staffId, data]) => {
+                    const staff = appData.staff.find(s => s.id === parseInt(staffId));
+                    if (staff) {
+                        staff.totalCommission = (staff.totalCommission || 0) + (data.commission || 0);
+                        staff.jobsCompleted = (staff.jobsCompleted || 0) + (data.jobs || 1);
+                        staff.salesGenerated = (staff.salesGenerated || 0) + (t.total || 0);
+                    }
+                });
+            }
+        });
+
+        appData.weeklyCommissionCache = null;
+        appData.monthlyCommissionCache = null;
+        saveToLocal();
+    }
+
+    // ======================== UPDATE TRANSACTION ========================
+    function updateTransactionAndCommissions(transactionId, updatedData) {
+        const txIndex = appData.transactions.findIndex(t => t.id === transactionId);
+        if (txIndex === -1) return false;
+
+        // Store old transaction data for commission recalculation
+        const oldTx = { ...appData.transactions[txIndex] };
+        
+        // Update transaction
+        appData.transactions[txIndex] = { ...appData.transactions[txIndex], ...updatedData };
+
+        // Recalculate all staff commissions from scratch
+        recalculateStaffCommissions();
+
+        // Clear caches
+        appData.weeklyCommissionCache = null;
+        appData.monthlyCommissionCache = null;
+        saveToLocal();
+        renderApp();
+        return true;
+    }
+
+    // ======================== DELETE TRANSACTION ========================
+    function deleteTransactionAndCommission(transactionId) {
+        if (!confirm("Delete this transaction? This will also remove associated commissions.")) return false;
+
+        const txIndex = appData.transactions.findIndex(t => t.id === transactionId);
+        if (txIndex === -1) return false;
+
+        // Remove transaction
+        appData.transactions.splice(txIndex, 1);
+
+        // Recalculate all staff commissions
+        recalculateStaffCommissions();
+
+        // Clear caches
+        appData.weeklyCommissionCache = null;
+        appData.monthlyCommissionCache = null;
+        saveToLocal();
+        renderApp();
+        alert("✅ Transaction deleted and commissions updated!");
+        return true;
+    }
+
+    // ======================== 58MM RECEIPT ========================
     function print58mmReceipt(tx) {
         const printWindow = window.open('', '_blank');
         const logoHtml = appData.systemSettings.companyLogo ? 
             `<div class="center"><img src="${appData.systemSettings.companyLogo}" style="max-width:80px;max-height:50px;object-fit:contain;"></div>` : '';
-        
-        const autoCut = `<script>
-            document.addEventListener('DOMContentLoaded', function() {
-                window.print();
-                window.onafterprint = function() { window.close(); };
-            });
-        <\/script>`;
         
         printWindow.document.write(`<!DOCTYPE html>
         <html>
@@ -335,7 +407,12 @@
                 <div style="text-align:center; font-size:8px; margin-top:2px; color:#888;">${new Date().toLocaleString()}</div>
                 <div style="text-align:center; font-size:6px; margin-top:8px;">--- Cut Here ---</div>
             </div>
-            ${autoCut}
+            <script>
+                document.addEventListener('DOMContentLoaded', function() {
+                    window.print();
+                    window.onafterprint = function() { window.close(); };
+                });
+            <\/script>
         </body>
         </html>`);
         printWindow.document.close();
@@ -373,8 +450,8 @@
                     ${appData.systemSettings.companyLogo ? `<img src="${appData.systemSettings.companyLogo}" class="mx-auto max-h-20 mb-4">` : ''}
                     <h2 class="text-3xl font-bold glow-text">${appData.systemSettings.companyName}</h2>
                     <p class="text-gray-400 text-sm">${appData.systemSettings.tagline}</p>
-                    <p class="text-cyan-400 text-xs mt-2">Enterprise POS System v7.7</p>
-                    <p class="text-xs text-green-400 mt-1"><i class="fas fa-sync"></i> Auto-Commission Updates</p>
+                    <p class="text-cyan-400 text-xs mt-2">Enterprise POS System v7.8</p>
+                    <p class="text-xs text-green-400 mt-1"><i class="fas fa-sync"></i> Real-time Commission Updates</p>
                 </div>
                 <div class="space-y-4">
                     <div><label class="text-gray-400">Username</label><input type="text" id="loginUser" class="w-full bg-gray-800 p-3 rounded border border-gray-700" placeholder="Enter username" value="owner"></div>
@@ -394,22 +471,241 @@
         const pass = document.getElementById('loginPass')?.value;
         if(login(user, pass)) {
             alert(`Welcome ${appData.currentUser.name}! (${appData.currentUser.role})`);
-            // Refresh weekly commission cache on login
             appData.weeklyCommissionCache = null;
+            appData.monthlyCommissionCache = null;
         } else {
             alert("Invalid credentials!");
         }
     };
 
-    // ======================== ENHANCED WEEKLY COMMISSION REPORT WITH AUTO-UPDATE ========================
-    function generateWeeklyCommissionReport() {
-        // Check cache first
-        if (appData.weeklyCommissionCache) {
-            return appData.weeklyCommissionCache;
+    // ======================== TRANSACTION MANAGEMENT ========================
+    function renderAdminTransactions() {
+        if(showLogin) return renderLogin();
+        
+        // Recalculate commissions to ensure accuracy
+        recalculateStaffCommissions();
+        
+        let txHtml = appData.transactions.map(t => `
+            <tr class="border-b border-gray-700 transaction-row">
+                <td class="py-2 font-mono text-xs">${t.id}</td>
+                <td class="editable-field cursor-pointer" onclick="editTransactionDate('${t.id}')">${new Date(t.date).toLocaleString()}</td>
+                <td class="editable-field cursor-pointer" onclick="editTransactionCustomer('${t.id}')">${t.customer}</td>
+                <td>${t.vehicle}</td>
+                <td>${t.items.map(i => `${i.serviceName} (${i.variant})`).join(', ')}</td>
+                <td>${t.items.flatMap(i => i.assignedStaff?.map(s => s.name) || []).filter((v,i,a) => a.indexOf(v)===i).join(', ') || 'Unassigned'}</td>
+                <td class="text-green-400 font-bold editable-field cursor-pointer" onclick="editTransactionAmount('${t.id}')">₱${t.total.toFixed(2)}</td>
+                <td>${t.paymentMethod || 'Cash'}</td>
+                <td>
+                    <button onclick="editTransactionFull('${t.id}')" class="action-btn bg-cyan-600 text-white hover:bg-cyan-700" title="Edit Full"><i class="fas fa-edit"></i></button>
+                    <button onclick="deleteTransactionAndCommission('${t.id}')" class="action-btn bg-red-600 text-white hover:bg-red-700" title="Delete"><i class="fas fa-trash"></i></button>
+                    <button onclick="printReceiptFromTransaction('${t.id}')" class="action-btn bg-green-600 text-white hover:bg-green-700" title="Print Receipt"><i class="fas fa-print"></i></button>
+                </td>
+            </tr>
+        `).join('');
+
+        const totalIncome = appData.transactions.reduce((s,t)=>s+t.total,0);
+        const totalCommission = appData.staff.reduce((sum, s) => sum + (s.totalCommission || 0), 0);
+
+        return `<div class="card-premium p-5">
+            <div class="flex justify-between items-center mb-4">
+                <h3 class="text-xl font-bold"><i class="fas fa-receipt"></i> Transaction Management</h3>
+                <div class="flex gap-2">
+                    <span class="text-sm text-gray-400">Total Transactions: ${appData.transactions.length}</span>
+                    <span class="text-sm text-green-400">Total Revenue: ₱${totalIncome.toFixed(2)}</span>
+                    <span class="text-sm text-yellow-400">Total Commissions: ₱${totalCommission.toFixed(2)}</span>
+                    <button onclick="showAddTransactionModal()" class="bg-green-600 px-3 py-1 rounded text-sm"><i class="fas fa-plus"></i> Add Manual</button>
+                    <button onclick="refreshTransactions()" class="bg-cyan-600 px-3 py-1 rounded text-sm"><i class="fas fa-sync"></i> Refresh</button>
+                </div>
+            </div>
+            <p class="text-xs text-gray-400 mb-3"><i class="fas fa-info-circle text-cyan-400"></i> Click any field to edit individually. Edit/Delete updates commissions automatically.</p>
+            <div class="overflow-x-auto max-h-96 overflow-y-auto">
+                <table class="w-full text-sm">
+                    <thead class="sticky top-0 bg-gray-900 border-b-2 border-cyan-400">
+                        <tr>
+                            <th class="text-left py-2">Receipt</th>
+                            <th class="text-left py-2">Date & Time</th>
+                            <th class="text-left py-2">Customer</th>
+                            <th class="text-left py-2">Vehicle</th>
+                            <th class="text-left py-2">Service</th>
+                            <th class="text-left py-2">Staff</th>
+                            <th class="text-right py-2">Total</th>
+                            <th class="text-left py-2">Payment</th>
+                            <th class="text-center py-2">Actions</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        ${txHtml || '<tr><td colspan="9" class="text-center py-8 text-gray-400">No transactions found</td></tr>'}
+                    </tbody>
+                    <tfoot class="sticky bottom-0 bg-gray-900 border-t-2 border-cyan-400 font-bold">
+                        <tr>
+                            <td colspan="6" class="py-2 text-right">TOTALS:</td>
+                            <td class="text-right text-green-400">₱${totalIncome.toFixed(2)}</td>
+                            <td colspan="2"></td>
+                        </tr>
+                    </tfoot>
+                </table>
+            </div>
+            <div class="mt-2 text-xs text-gray-400">
+                <i class="fas fa-sync text-cyan-400"></i> Editing or deleting transactions automatically updates staff commissions and weekly reports.
+            </div>
+        </div>`;
+    }
+
+    // Transaction Edit Functions
+    window.editTransactionAmount = (id) => {
+        const t = appData.transactions.find(tx => tx.id === id);
+        if(t) {
+            const newAmt = parseFloat(prompt("Edit amount:", t.total));
+            if(!isNaN(newAmt) && newAmt > 0) {
+                updateTransactionAndCommissions(id, { total: newAmt, subtotal: newAmt });
+                alert("✅ Amount updated! Commissions recalculated.");
+            }
         }
+    };
+
+    window.editTransactionCustomer = (id) => {
+        const t = appData.transactions.find(tx => tx.id === id);
+        if(t) {
+            const newName = prompt("Edit customer:", t.customer);
+            if(newName !== null) {
+                updateTransactionAndCommissions(id, { customer: newName });
+                alert("✅ Customer updated!");
+            }
+        }
+    };
+
+    window.editTransactionDate = (id) => {
+        const t = appData.transactions.find(tx => tx.id === id);
+        if(t) {
+            const newDate = prompt("Edit date (YYYY-MM-DD):", new Date(t.date).toISOString().slice(0,10));
+            if(newDate) {
+                updateTransactionAndCommissions(id, { date: new Date(newDate).toISOString() });
+                alert("✅ Date updated!");
+            }
+        }
+    };
+
+    window.editTransactionFull = (id) => {
+        const t = appData.transactions.find(tx => tx.id === id);
+        if(!t) return;
+        
+        let modalHtml = `<div id="adminModal" class="modal"><div class="modal-content">
+            <h3 class="text-xl font-bold mb-4">Edit Transaction</h3>
+            <div class="space-y-3">
+                <div><label class="text-gray-400">Customer</label><input type="text" id="editTxCustomer" class="w-full bg-gray-800 p-2 rounded" value="${t.customer}"></div>
+                <div><label class="text-gray-400">Amount</label><input type="number" id="editTxAmount" class="w-full bg-gray-800 p-2 rounded" value="${t.total}" step="0.01"></div>
+                <div><label class="text-gray-400">Vehicle</label><input type="text" id="editTxVehicle" class="w-full bg-gray-800 p-2 rounded" value="${t.vehicle}"></div>
+                <div><label class="text-gray-400">Plate</label><input type="text" id="editTxPlate" class="w-full bg-gray-800 p-2 rounded" value="${t.plate}"></div>
+                <div><label class="text-gray-400">Payment Method</label><select id="editTxPayment" class="w-full bg-gray-800 p-2 rounded">
+                    <option ${t.paymentMethod==="Cash"?"selected":""}>Cash</option>
+                    <option ${t.paymentMethod==="GCash"?"selected":""}>GCash</option>
+                    <option ${t.paymentMethod==="Maya"?"selected":""}>Maya</option>
+                    <option ${t.paymentMethod==="Credit Card"?"selected":""}>Credit Card</option>
+                    <option ${t.paymentMethod==="Bank Transfer"?"selected":""}>Bank Transfer</option>
+                </select></div>
+                <div class="flex gap-3 mt-4">
+                    <button onclick="confirmEditTransaction('${id}')" class="btn-neon flex-1 p-2 rounded">Update</button>
+                    <button onclick="closeAdminModal()" class="bg-gray-700 flex-1 p-2 rounded">Cancel</button>
+                </div>
+            </div>
+        </div></div>`;
+        document.body.insertAdjacentHTML('beforeend', modalHtml);
+    };
+
+    window.confirmEditTransaction = (id) => {
+        const customer = document.getElementById('editTxCustomer')?.value;
+        const amount = parseFloat(document.getElementById('editTxAmount')?.value);
+        const vehicle = document.getElementById('editTxVehicle')?.value;
+        const plate = document.getElementById('editTxPlate')?.value;
+        const payment = document.getElementById('editTxPayment')?.value;
+        
+        const updates = {};
+        if(customer) updates.customer = customer;
+        if(!isNaN(amount) && amount > 0) { updates.total = amount; updates.subtotal = amount; }
+        if(vehicle) updates.vehicle = vehicle;
+        if(plate) updates.plate = plate;
+        if(payment) updates.paymentMethod = payment;
+        
+        updateTransactionAndCommissions(id, updates);
+        closeAdminModal();
+        alert("✅ Transaction updated! Commissions recalculated.");
+        renderApp();
+    };
+
+    window.printReceiptFromTransaction = (id) => {
+        const t = appData.transactions.find(tx => tx.id === id);
+        if(t) print58mmReceipt(t);
+    };
+
+    window.showAddTransactionModal = () => {
+        let modalHtml = `<div id="adminModal" class="modal"><div class="modal-content">
+            <h3 class="text-xl font-bold mb-4">Add Manual Transaction</h3>
+            <div class="space-y-3">
+                <div><label class="text-gray-400">Customer</label><input type="text" id="txCustomerInput" class="w-full bg-gray-800 p-2 rounded" value="Walk-in Customer"></div>
+                <div><label class="text-gray-400">Amount</label><input type="number" id="txAmountInput" class="w-full bg-gray-800 p-2 rounded" step="0.01"></div>
+                <div><label class="text-gray-400">Vehicle</label><input type="text" id="txVehicleInput" class="w-full bg-gray-800 p-2 rounded" placeholder="Toyota Vios"></div>
+                <div><label class="text-gray-400">Plate</label><input type="text" id="txPlateInput" class="w-full bg-gray-800 p-2 rounded"></div>
+                <div><label class="text-gray-400">Payment Method</label><select id="txPaymentInput" class="w-full bg-gray-800 p-2 rounded">
+                    <option>Cash</option><option>GCash</option><option>Maya</option><option>Credit Card</option><option>Bank Transfer</option>
+                </select></div>
+                <div class="flex gap-3 mt-4">
+                    <button onclick="confirmAddTransaction()" class="btn-neon flex-1 p-2 rounded">Add</button>
+                    <button onclick="closeAdminModal()" class="bg-gray-700 flex-1 p-2 rounded">Cancel</button>
+                </div>
+            </div>
+        </div></div>`;
+        document.body.insertAdjacentHTML('beforeend', modalHtml);
+    };
+
+    window.confirmAddTransaction = () => {
+        const customer = document.getElementById('txCustomerInput')?.value || "Walk-in Customer";
+        const amount = parseFloat(document.getElementById('txAmountInput')?.value);
+        const vehicle = document.getElementById('txVehicleInput')?.value || "N/A";
+        const plate = document.getElementById('txPlateInput')?.value || "N/A";
+        const payment = document.getElementById('txPaymentInput')?.value || "Cash";
+        
+        if(isNaN(amount) || amount <= 0) { alert("Valid amount required!"); return; }
+        
+        const transaction = {
+            id: generateReceiptNo(),
+            date: new Date().toISOString(),
+            customer: customer,
+            vehicle: vehicle,
+            plate: plate,
+            items: [{ serviceName: "Manual Entry", variant: "Standard", price: amount, quantity: 1, total: amount, assignedStaff: [], remarks: "Manual transaction" }],
+            subtotal: amount,
+            discount: 0,
+            loyaltyUsed: 0,
+            total: amount,
+            paymentMethod: payment,
+            cashTendered: amount,
+            change: 0,
+            remarks: "Manual transaction added via admin"
+        };
+        
+        appData.transactions.unshift(transaction);
+        saveToLocal();
+        appData.weeklyCommissionCache = null;
+        appData.monthlyCommissionCache = null;
+        closeAdminModal();
+        renderApp();
+        alert("✅ Transaction added!");
+    };
+
+    window.refreshTransactions = () => {
+        recalculateStaffCommissions();
+        appData.weeklyCommissionCache = null;
+        appData.monthlyCommissionCache = null;
+        renderApp();
+        alert("✅ Transactions refreshed! Commissions recalculated.");
+    };
+
+    // ======================== WEEKLY COMMISSION REPORT WITH CALENDAR DATES ========================
+    function generateWeeklyCommissionReport() {
+        if (appData.weeklyCommissionCache) return appData.weeklyCommissionCache;
 
         const today = new Date();
-        const currentDay = today.getDay(); // 0=Sunday, 1=Monday, etc.
+        const currentDay = today.getDay();
         const weekStart = new Date(today);
         weekStart.setDate(today.getDate() - currentDay);
         weekStart.setHours(0, 0, 0, 0);
@@ -418,6 +714,11 @@
         weekEnd.setHours(23, 59, 59, 999);
 
         const dayNames = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+        const dayDates = dayNames.map((_, i) => {
+            const d = new Date(weekStart);
+            d.setDate(weekStart.getDate() + i);
+            return d;
+        });
         
         const reportData = appData.staff.map(staff => {
             const staffTransactions = appData.transactions.filter(t => {
@@ -425,31 +726,21 @@
                 return tDate >= weekStart && tDate <= weekEnd && t.staffCommissions && t.staffCommissions[staff.id];
             });
 
-            // Initialize daily totals
             const dailyTotals = {};
-            dayNames.forEach(day => dailyTotals[day] = 0);
+            const dailyTxCount = {};
+            dayNames.forEach(day => { dailyTotals[day] = 0; dailyTxCount[day] = 0; });
             
-            // Calculate daily commissions
             staffTransactions.forEach(t => {
                 const tDate = new Date(t.date);
                 const dayName = dayNames[tDate.getDay()];
                 const commission = t.staffCommissions[staff.id]?.commission || 0;
                 dailyTotals[dayName] = (dailyTotals[dayName] || 0) + commission;
+                dailyTxCount[dayName] = (dailyTxCount[dayName] || 0) + 1;
             });
 
-            // Calculate splits
             const sunToTue = dailyTotals.Sunday + dailyTotals.Monday + dailyTotals.Tuesday;
             const wedToSat = dailyTotals.Wednesday + dailyTotals.Thursday + dailyTotals.Friday + dailyTotals.Saturday;
             const monthlyGrand = Object.values(dailyTotals).reduce((sum, val) => sum + val, 0);
-
-            // Get transactions count per day
-            const dailyTxCount = {};
-            dayNames.forEach(day => dailyTxCount[day] = 0);
-            staffTransactions.forEach(t => {
-                const tDate = new Date(t.date);
-                const dayName = dayNames[tDate.getDay()];
-                dailyTxCount[dayName] = (dailyTxCount[dayName] || 0) + 1;
-            });
 
             return {
                 staffId: staff.id,
@@ -468,7 +759,6 @@
             };
         });
 
-        // Calculate totals row
         const totals = {
             jobsCompleted: reportData.reduce((sum, s) => sum + s.jobsCompleted, 0),
             salesGenerated: reportData.reduce((sum, s) => sum + s.salesGenerated, 0),
@@ -477,23 +767,28 @@
             wedToSat: 0,
             monthlyGrand: 0
         };
-        ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'].forEach(day => {
+        dayNames.forEach(day => {
             totals.dailyTotals[day] = reportData.reduce((sum, s) => sum + (s.dailyTotals[day] || 0), 0);
         });
         totals.sunToTue = reportData.reduce((sum, s) => sum + s.sunToTue, 0);
         totals.wedToSat = reportData.reduce((sum, s) => sum + s.wedToSat, 0);
         totals.monthlyGrand = reportData.reduce((sum, s) => sum + s.monthlyGrand, 0);
 
-        // Cache the result
-        appData.weeklyCommissionCache = { reportData, totals, weekStart, weekEnd, dayNames };
+        appData.weeklyCommissionCache = { reportData, totals, weekStart, weekEnd, dayNames, dayDates };
         return appData.weeklyCommissionCache;
     }
 
     function renderWeeklyCommissionReport() {
         if(showLogin) return renderLogin();
         
-        const { reportData, totals, weekStart, weekEnd, dayNames } = generateWeeklyCommissionReport();
+        const { reportData, totals, weekStart, weekEnd, dayNames, dayDates } = generateWeeklyCommissionReport();
         
+        // Calendar header with dates
+        const calendarHeader = dayDates.map((d, i) => {
+            const isToday = d.toDateString() === new Date().toDateString();
+            return `<th class="text-center py-2 day-col ${isToday ? 'text-green-400' : ''}">${dayNames[i].substring(0,3)}<br><span class="text-xs ${isToday ? 'text-green-400' : 'text-gray-500'}">${d.getDate()}</span></th>`;
+        }).join('');
+
         let tableHtml = reportData.map(s => `
             <tr class="border-b border-gray-700 hover:bg-gray-800 transition">
                 <td class="py-2 font-semibold">${s.name}</td>
@@ -512,10 +807,9 @@
             <div class="flex justify-between items-center mb-4">
                 <div>
                     <h2 class="text-2xl font-bold"><i class="fas fa-calendar-week"></i> Weekly Commission Report</h2>
-                    <p class="text-xs text-green-400 mt-1"><i class="fas fa-sync"></i> Auto-updated when services are completed</p>
+                    <p class="text-xs text-gray-400 mt-1">Week: ${weekStart.toLocaleDateString()} - ${weekEnd.toLocaleDateString()}</p>
                 </div>
                 <div class="flex gap-2 flex-wrap">
-                    <span class="text-sm text-gray-400">Week: ${weekStart.toLocaleDateString()} - ${weekEnd.toLocaleDateString()}</span>
                     <button onclick="exportWeeklyCommissionExcel()" class="excel-export-btn px-4 py-2 rounded text-sm text-white"><i class="fas fa-file-excel"></i> Export Excel</button>
                     <button onclick="printWeeklyCommission()" class="bg-cyan-600 px-4 py-2 rounded text-sm"><i class="fas fa-print"></i> Print</button>
                     <button onclick="refreshWeeklyCommission()" class="bg-green-600 px-4 py-2 rounded text-sm"><i class="fas fa-sync"></i> Refresh</button>
@@ -531,10 +825,10 @@
                             <th class="text-center py-2">Tier</th>
                             <th class="text-center py-2">Jobs</th>
                             <th class="text-right py-2">Sales</th>
-                            ${dayNames.map(day => `<th class="text-center py-2 day-col">${day.substring(0,3)}</th>`).join('')}
+                            ${calendarHeader}
                             <th class="text-center py-2 text-yellow-400">Sun-Tue</th>
                             <th class="text-center py-2 text-yellow-400">Wed-Sat</th>
-                            <th class="text-center py-2 text-green-400">Monthly Grand</th>
+                            <th class="text-center py-2 text-green-400">Weekly Grand</th>
                         </tr>
                     </thead>
                     <tbody>
@@ -554,57 +848,196 @@
                 <i class="fas fa-info-circle text-cyan-400"></i> 
                 <span class="text-yellow-400">Sun-Tue:</span> Total Commission from Sunday to Tuesday | 
                 <span class="text-yellow-400">Wed-Sat:</span> Total Commission from Wednesday to Saturday |
-                <span class="text-green-400">Monthly Grand:</span> Total Commission for the full week
+                <span class="text-green-400">Weekly Grand:</span> Total Commission for the full week
             </div>
         </div>`;
     }
 
     window.refreshWeeklyCommission = () => {
         appData.weeklyCommissionCache = null;
-        generateWeeklyCommissionReport();
+        recalculateStaffCommissions();
         renderApp();
         alert('✅ Weekly commission report refreshed!');
     };
 
-    // ======================== EXPORT WEEKLY COMMISSION EXCEL ========================
+    // ======================== MONTHLY COMMISSION CALENDAR REPORT ========================
+    function generateMonthlyCommissionReport() {
+        if (appData.monthlyCommissionCache) return appData.monthlyCommissionCache;
+
+        const now = new Date();
+        const monthStart = new Date(now.getFullYear(), now.getMonth(), 1);
+        const monthEnd = new Date(now.getFullYear(), now.getMonth() + 1, 0);
+        const daysInMonth = monthEnd.getDate();
+
+        const reportData = appData.staff.map(staff => {
+            const staffTransactions = appData.transactions.filter(t => {
+                const tDate = new Date(t.date);
+                return tDate >= monthStart && tDate <= monthEnd && t.staffCommissions && t.staffCommissions[staff.id];
+            });
+
+            const dailyTotals = {};
+            for (let d = 1; d <= daysInMonth; d++) {
+                dailyTotals[d] = 0;
+            }
+            
+            staffTransactions.forEach(t => {
+                const tDate = new Date(t.date);
+                const day = tDate.getDate();
+                const commission = t.staffCommissions[staff.id]?.commission || 0;
+                dailyTotals[day] = (dailyTotals[day] || 0) + commission;
+            });
+
+            const totalCommission = staffTransactions.reduce((sum, t) => {
+                return sum + (t.staffCommissions[staff.id]?.commission || 0);
+            }, 0);
+
+            return {
+                staffId: staff.id,
+                name: staff.name,
+                position: staff.position,
+                commissionTier: staff.commissionTier,
+                jobsCompleted: staff.jobsCompleted || 0,
+                salesGenerated: staff.salesGenerated || 0,
+                dailyTotals: dailyTotals,
+                totalCommission: totalCommission,
+                transactionCount: staffTransactions.length
+            };
+        });
+
+        // Get all days with transactions for calendar highlighting
+        const daysWithTransactions = {};
+        const daysWithCommissions = {};
+        for (let d = 1; d <= daysInMonth; d++) {
+            daysWithTransactions[d] = appData.transactions.some(t => {
+                const tDate = new Date(t.date);
+                return tDate.getDate() === d && tDate.getMonth() === now.getMonth() && tDate.getFullYear() === now.getFullYear();
+            });
+            daysWithCommissions[d] = appData.transactions.some(t => {
+                const tDate = new Date(t.date);
+                return tDate.getDate() === d && tDate.getMonth() === now.getMonth() && tDate.getFullYear() === now.getFullYear() && t.staffCommissions;
+            });
+        }
+
+        appData.monthlyCommissionCache = { 
+            reportData, 
+            monthStart, 
+            monthEnd, 
+            daysInMonth, 
+            daysWithTransactions, 
+            daysWithCommissions,
+            month: now.toLocaleString('default', { month: 'long', year: 'numeric' })
+        };
+        return appData.monthlyCommissionCache;
+    }
+
+    function renderMonthlyCommissionReport() {
+        if(showLogin) return renderLogin();
+        
+        const { reportData, monthStart, monthEnd, daysInMonth, daysWithTransactions, daysWithCommissions, month } = generateMonthlyCommissionReport();
+        
+        // Calendar view
+        let calendarHtml = '';
+        for (let d = 1; d <= daysInMonth; d++) {
+            const hasTx = daysWithTransactions[d];
+            const hasComm = daysWithCommissions[d];
+            const isToday = new Date().getDate() === d && new Date().getMonth() === monthStart.getMonth();
+            let classes = 'calendar-day';
+            if (hasComm) classes += ' has-commission';
+            else if (hasTx) classes += ' has-transaction';
+            if (isToday) classes += ' today';
+            calendarHtml += `<span class="${classes}" title="${hasComm ? 'Has commissions' : hasTx ? 'Has transactions' : 'No activity'}">${d}</span>`;
+        }
+
+        // Summary table
+        let tableHtml = reportData.map(s => `
+            <tr class="border-b border-gray-700 hover:bg-gray-800 transition">
+                <td class="py-2 font-semibold">${s.name}</td>
+                <td>${s.position}</td>
+                <td class="text-center"><span class="commission-badge">${s.commissionTier}%</span></td>
+                <td class="text-center">${s.jobsCompleted}</td>
+                <td class="text-right">₱${s.salesGenerated.toFixed(2)}</td>
+                <td class="text-right text-green-400 font-bold">₱${s.totalCommission.toFixed(2)}</td>
+            </tr>
+        `).join('');
+
+        const totalMonthlyCommission = reportData.reduce((sum, s) => sum + s.totalCommission, 0);
+
+        return `<div class="card-premium p-6">
+            <div class="flex justify-between items-center mb-4">
+                <div>
+                    <h2 class="text-2xl font-bold"><i class="fas fa-calendar-alt"></i> Monthly Commission Calendar</h2>
+                    <p class="text-xs text-gray-400 mt-1">${month} | ${monthStart.toLocaleDateString()} - ${monthEnd.toLocaleDateString()}</p>
+                </div>
+                <div class="flex gap-2">
+                    <button onclick="exportMonthlyCommissionExcel()" class="excel-export-btn px-4 py-2 rounded text-sm text-white"><i class="fas fa-file-excel"></i> Export Excel</button>
+                    <button onclick="printMonthlyCommission()" class="bg-cyan-600 px-4 py-2 rounded text-sm"><i class="fas fa-print"></i> Print</button>
+                </div>
+            </div>
+            
+            <div class="bg-gray-800 p-4 rounded-lg mb-4">
+                <div class="text-sm text-gray-400 mb-2">Calendar View</div>
+                <div class="flex flex-wrap gap-1">
+                    ${calendarHtml}
+                </div>
+                <div class="flex gap-4 mt-2 text-xs">
+                    <span><span class="inline-block w-3 h-3 rounded" style="background:rgba(0,255,136,0.2)"></span> Has Commissions</span>
+                    <span><span class="inline-block w-3 h-3 rounded" style="background:rgba(0,212,255,0.2)"></span> Has Transactions</span>
+                    <span><span class="inline-block w-3 h-3 rounded border border-cyan-400"></span> Today</span>
+                </div>
+            </div>
+            
+            <div class="overflow-x-auto max-h-80 overflow-y-auto">
+                <table class="w-full text-sm">
+                    <thead class="sticky top-0 bg-gray-900 border-b-2 border-purple-400">
+                        <tr>
+                            <th class="text-left py-2">Staff Name</th>
+                            <th class="text-left py-2">Position</th>
+                            <th class="text-center py-2">Tier</th>
+                            <th class="text-center py-2">Jobs</th>
+                            <th class="text-right py-2">Sales</th>
+                            <th class="text-right py-2 text-green-400">Monthly Commission</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        ${tableHtml || '<tr><td colspan="6" class="text-center py-8 text-gray-400">No data for this month</td></tr>'}
+                        <tr class="border-t-2 border-purple-400 bg-gray-800 font-bold">
+                            <td colspan="5" class="py-2 text-right">TOTAL MONTHLY COMMISSION:</td>
+                            <td class="text-right text-green-400 text-lg">₱${totalMonthlyCommission.toFixed(2)}</td>
+                        </tr>
+                    </tbody>
+                </table>
+            </div>
+        </div>`;
+    }
+
+    // ======================== EXPORT FUNCTIONS ========================
     function exportWeeklyCommissionExcel() {
         const { reportData, totals, weekStart, weekEnd, dayNames } = generateWeeklyCommissionReport();
         const wb = XLSX.utils.book_new();
 
-        // Main Weekly Commission Report Sheet
         let data = [
             [`${appData.systemSettings.companyName} - WEEKLY COMMISSION REPORT`],
             [`Week: ${weekStart.toLocaleDateString()} - ${weekEnd.toLocaleDateString()}`],
             [`Date Generated: ${new Date().toLocaleString()}`],
             [],
-            ['Staff Name', 'Position', 'Tier', 'Jobs', 'Sales', ...dayNames, 'Sun-Tue Total', 'Wed-Sat Total', 'Monthly Grand Total']
+            ['Staff Name', 'Position', 'Tier', 'Jobs', 'Sales', ...dayNames, 'Sun-Tue Total', 'Wed-Sat Total', 'Weekly Grand Total']
         ];
 
         reportData.forEach(s => {
             data.push([
-                s.name,
-                s.position,
-                `${s.commissionTier}%`,
-                s.jobsCompleted,
-                s.salesGenerated.toFixed(2),
+                s.name, s.position, `${s.commissionTier}%`, s.jobsCompleted, s.salesGenerated.toFixed(2),
                 ...dayNames.map(day => s.dailyTotals[day]?.toFixed(2) || '0.00'),
-                s.sunToTue.toFixed(2),
-                s.wedToSat.toFixed(2),
-                s.monthlyGrand.toFixed(2)
+                s.sunToTue.toFixed(2), s.wedToSat.toFixed(2), s.monthlyGrand.toFixed(2)
             ]);
         });
 
-        // Totals row
         data.push([
             'TOTALS', '', '', totals.jobsCompleted, totals.salesGenerated.toFixed(2),
             ...dayNames.map(day => totals.dailyTotals[day]?.toFixed(2) || '0.00'),
-            totals.sunToTue.toFixed(2),
-            totals.wedToSat.toFixed(2),
-            totals.monthlyGrand.toFixed(2)
+            totals.sunToTue.toFixed(2), totals.wedToSat.toFixed(2), totals.monthlyGrand.toFixed(2)
         ]);
 
-        const ws1 = XLSX.utils.aoa_to_sheet(data);
-        
+        const ws = XLSX.utils.aoa_to_sheet(data);
         const colWidths = [];
         for (let i = 0; i < data[0].length; i++) {
             let maxWidth = 12;
@@ -616,121 +1049,100 @@
             }
             colWidths.push({ wch: Math.min(maxWidth, 45) });
         }
-        ws1['!cols'] = colWidths;
+        ws['!cols'] = colWidths;
 
-        const range = XLSX.utils.decode_range(ws1['!ref']);
+        const range = XLSX.utils.decode_range(ws['!ref']);
         for (let R = range.s.r; R <= range.e.r; R++) {
             for (let C = range.s.c; C <= range.e.c; C++) {
                 const addr = XLSX.utils.encode_cell({ r: R, c: C });
-                if (!ws1[addr]) continue;
-                if (!ws1[addr].s) ws1[addr].s = {};
-                ws1[addr].s.alignment = { wrapText: true, vertical: 'top', horizontal: R === 0 || R === 1 || R === 2 ? 'center' : 'left' };
+                if (!ws[addr]) continue;
+                if (!ws[addr].s) ws[addr].s = {};
+                ws[addr].s.alignment = { wrapText: true, vertical: 'top' };
                 if (R === 0 || R === 1 || R === 2 || R === 4 || R === data.length - 1) {
-                    ws1[addr].s.font = { bold: true };
-                }
-                if (R > 4 && C >= 5 && C <= 11) {
-                    ws1[addr].s.font = { color: { rgb: "00D4FF" } };
-                }
-                if (R > 4 && C === 12) {
-                    ws1[addr].s.font = { color: { rgb: "FFAA00" }, bold: true };
-                }
-                if (R > 4 && C === 13) {
-                    ws1[addr].s.font = { color: { rgb: "FFAA00" }, bold: true };
-                }
-                if (R > 4 && C === 14) {
-                    ws1[addr].s.font = { color: { rgb: "00FF88" }, bold: true };
+                    ws[addr].s.font = { bold: true };
                 }
             }
         }
 
-        XLSX.utils.book_append_sheet(wb, ws1, 'Weekly Commission');
+        XLSX.utils.book_append_sheet(wb, ws, 'Weekly Commission');
+        const fileName = `weekly_commission_${weekStart.toISOString().slice(0,10)}.xlsx`;
+        XLSX.writeFile(wb, fileName);
+        alert(`✅ Weekly commission report exported as: ${fileName}`);
+    }
 
-        // Detailed Breakdown Sheet
-        let detailData = [
-            ['DETAILED DAILY BREAKDOWN'],
+    function exportMonthlyCommissionExcel() {
+        const { reportData, month, totalMonthlyCommission } = generateMonthlyCommissionReport();
+        const wb = XLSX.utils.book_new();
+
+        let data = [
+            [`${appData.systemSettings.companyName} - MONTHLY COMMISSION REPORT`],
+            [`Month: ${month}`],
+            [`Date Generated: ${new Date().toLocaleString()}`],
             [],
-            ['Staff', 'Day', 'Commission', 'Transactions', 'Customers']
+            ['Staff Name', 'Position', 'Tier', 'Jobs Completed', 'Sales Generated', 'Monthly Commission']
         ];
 
         reportData.forEach(s => {
-            dayNames.forEach(day => {
-                const dayData = s.dailyTotals[day] || 0;
-                const txCount = s.dailyTxCount?.[day] || 0;
-                if (dayData > 0 || txCount > 0) {
-                    const customers = appData.transactions.filter(t => {
-                        const tDate = new Date(t.date);
-                        return tDate.getDay() === dayNames.indexOf(day) && 
-                               t.staffCommissions && t.staffCommissions[s.staffId];
-                    }).map(t => t.customer).filter((v, i, a) => a.indexOf(v) === i);
-                    
-                    detailData.push([
-                        s.name,
-                        day,
-                        dayData.toFixed(2),
-                        txCount,
-                        customers.join(', ') || 'N/A'
-                    ]);
-                }
-            });
+            data.push([
+                s.name, s.position, `${s.commissionTier}%`, s.jobsCompleted, s.salesGenerated.toFixed(2), s.totalCommission.toFixed(2)
+            ]);
         });
 
-        const ws2 = XLSX.utils.aoa_to_sheet(detailData);
-        const colWidths2 = [];
-        for (let i = 0; i < detailData[0].length; i++) {
+        data.push([
+            'TOTALS', '', '', reportData.reduce((sum, s) => sum + s.jobsCompleted, 0), 
+            reportData.reduce((sum, s) => sum + s.salesGenerated, 0).toFixed(2), totalMonthlyCommission.toFixed(2)
+        ]);
+
+        const ws = XLSX.utils.aoa_to_sheet(data);
+        const colWidths = [];
+        for (let i = 0; i < data[0].length; i++) {
             let maxWidth = 12;
-            for (let row of detailData) {
+            for (let row of data) {
                 if (row[i] !== undefined && row[i] !== null) {
                     const val = String(row[i]);
                     maxWidth = Math.max(maxWidth, val.length + 3);
                 }
             }
-            colWidths2.push({ wch: Math.min(maxWidth, 45) });
+            colWidths.push({ wch: Math.min(maxWidth, 45) });
         }
-        ws2['!cols'] = colWidths2;
+        ws['!cols'] = colWidths;
 
-        const range2 = XLSX.utils.decode_range(ws2['!ref']);
-        for (let R = range2.s.r; R <= range2.e.r; R++) {
-            for (let C = range2.s.c; C <= range2.e.c; C++) {
+        const range = XLSX.utils.decode_range(ws['!ref']);
+        for (let R = range.s.r; R <= range.e.r; R++) {
+            for (let C = range.s.c; C <= range.e.c; C++) {
                 const addr = XLSX.utils.encode_cell({ r: R, c: C });
-                if (!ws2[addr]) continue;
-                if (!ws2[addr].s) ws2[addr].s = {};
-                ws2[addr].s.alignment = { wrapText: true, vertical: 'top' };
-                if (R === 0 || R === 2) {
-                    ws2[addr].s.font = { bold: true };
+                if (!ws[addr]) continue;
+                if (!ws[addr].s) ws[addr].s = {};
+                ws[addr].s.alignment = { wrapText: true, vertical: 'top' };
+                if (R === 0 || R === 1 || R === 2 || R === 4 || R === data.length - 1) {
+                    ws[addr].s.font = { bold: true };
                 }
             }
         }
-        XLSX.utils.book_append_sheet(wb, ws2, 'Daily Details');
 
-        const fileName = `weekly_commission_${weekStart.toISOString().slice(0,10)}.xlsx`;
+        XLSX.utils.book_append_sheet(wb, ws, 'Monthly Commission');
+        const fileName = `monthly_commission_${new Date().toISOString().slice(0,7)}.xlsx`;
         XLSX.writeFile(wb, fileName);
-        alert(`✅ Weekly commission report exported as: ${fileName}\n\nThis Excel file is fully editable.`);
+        alert(`✅ Monthly commission report exported as: ${fileName}`);
     }
 
     window.printWeeklyCommission = () => {
         const printContent = document.querySelector('.card-premium').cloneNode(true);
         const win = window.open('', '_blank');
-        const logoHtml = appData.systemSettings.companyLogo ? 
-            `<div class="center"><img src="${appData.systemSettings.companyLogo}" style="max-width:100px;max-height:70px;object-fit:contain;"></div>` : '';
-        win.document.write(`<html><head><title>Weekly Commission Report</title><style>
-            body{font-family:monospace;padding:20px;background:white;color:black;}
-            .center{text-align:center;}
-            table{width:100%;border-collapse:collapse;font-size:11px;}
-            th,td{border:1px solid #ddd;padding:6px;text-align:left;}
-            th{background:#f0f0f0;}
-            .header{margin-bottom:20px;}
-            .text-center{text-align:center;}
-            .text-right{text-align:right;}
-        </style></head><body>
-            ${logoHtml}
-            <div class="header"><h2>${appData.systemSettings.companyName}</h2><p>Weekly Commission Report</p></div>
-            ${printContent.innerHTML}
-        </body></html>`);
+        win.document.write(`<html><head><title>Weekly Commission Report</title><style>body{font-family:monospace;padding:20px;background:white;color:black;}table{width:100%;border-collapse:collapse;}th,td{border:1px solid #ddd;padding:6px;}.center{text-align:center;}</style></head><body><h2>${appData.systemSettings.companyName}</h2><p>Weekly Commission Report</p>${printContent.innerHTML}</body></html>`);
         win.document.close();
         win.print();
     };
 
-    // ======================== OPEN SERVICES WITH AUTO-COMMISSION ========================
+    window.printMonthlyCommission = () => {
+        const printContent = document.querySelector('.card-premium').cloneNode(true);
+        const win = window.open('', '_blank');
+        win.document.write(`<html><head><title>Monthly Commission Report</title><style>body{font-family:monospace;padding:20px;background:white;color:black;}table{width:100%;border-collapse:collapse;}th,td{border:1px solid #ddd;padding:6px;}.center{text-align:center;}</style></head><body><h2>${appData.systemSettings.companyName}</h2><p>Monthly Commission Report</p>${printContent.innerHTML}</body></html>`);
+        win.document.close();
+        win.print();
+    };
+
+    // ======================== OPEN SERVICES ========================
     function createOpenService(customer, vehicle, plate, items, staff, total, remarks) {
         const openService = {
             id: "OS-" + new Date().getFullYear() + "-" + (appData.nextIds.openService++),
@@ -745,7 +1157,7 @@
             createdAt: new Date().toISOString(),
             completedAt: null,
             paidAt: null,
-            commissionProcessed: false // Track if commission has been processed
+            commissionProcessed: false
         };
         appData.openServices.push(openService);
         saveToLocal();
@@ -758,34 +1170,24 @@
             service.status = status;
             if(status === 'completed') {
                 service.completedAt = new Date().toISOString();
-                // Auto-generate commission when service is completed
                 processOpenServiceCommission(service);
             }
             saveToLocal();
-            // Clear cache so weekly report updates
             appData.weeklyCommissionCache = null;
+            appData.monthlyCommissionCache = null;
             renderApp();
         }
     }
 
-    // ======================== AUTO-COMMISSION PROCESSING ========================
     function processOpenServiceCommission(service) {
-        if (service.commissionProcessed) {
-            console.log('Commission already processed for this service:', service.id);
-            return;
-        }
+        if (service.commissionProcessed) return;
 
-        if (!service.staff || service.staff.length === 0) {
-            console.log('No staff assigned, skipping commission:', service.id);
-            return;
-        }
+        if (!service.staff || service.staff.length === 0) return;
 
-        // Calculate commission for each staff member
         const staffCommissionMap = new Map();
         service.items.forEach(item => {
             if (item.assignedStaff && item.assignedStaff.length > 0) {
                 item.assignedStaff.forEach(staff => {
-                    // Calculate commission based on the service price and staff tier
                     const commissionAmt = getCommissionAmount(item.serviceName, item.variant, staff.commissionTier);
                     const splitCommission = item.assignedStaff.length === 2 ? commissionAmt / 2 : commissionAmt;
                     
@@ -804,7 +1206,6 @@
             }
         });
 
-        // Create a transaction entry for the open service
         const transaction = {
             id: "OS-" + generateReceiptNo(),
             date: service.completedAt || new Date().toISOString(),
@@ -831,10 +1232,8 @@
             isCommissionAutoGenerated: true
         };
 
-        // Add to transactions
         appData.transactions.unshift(transaction);
 
-        // Update staff records
         staffCommissionMap.forEach((data, staffId) => {
             const staffMember = appData.staff.find(s => s.id === staffId);
             if(staffMember) {
@@ -844,36 +1243,12 @@
             }
         });
 
-        // Mark as processed
         service.commissionProcessed = true;
         service.transactionId = transaction.id;
 
-        // Clear cache for weekly report
         appData.weeklyCommissionCache = null;
+        appData.monthlyCommissionCache = null;
         saveToLocal();
-
-        console.log(`✅ Commission auto-generated for service ${service.id}:`, staffCommissionMap);
-        return transaction;
-    }
-
-    // Process all completed services that haven't had commission processed
-    function processPendingCommissions() {
-        const pendingServices = appData.openServices.filter(s => 
-            s.status === 'completed' && !s.commissionProcessed
-        );
-        
-        if (pendingServices.length === 0) {
-            return;
-        }
-
-        pendingServices.forEach(service => {
-            processOpenServiceCommission(service);
-        });
-
-        saveToLocal();
-        appData.weeklyCommissionCache = null;
-        alert(`✅ Processed ${pendingServices.length} pending service commission(s)!`);
-        renderApp();
     }
 
     function completeOpenServicePayment(id, paymentMethod, cashTendered) {
@@ -886,7 +1261,6 @@
             return;
         }
         
-        // If commission hasn't been processed yet, process it now
         if (!service.commissionProcessed && service.status === 'completed') {
             processOpenServiceCommission(service);
         }
@@ -920,6 +1294,7 @@
         
         appData.openServices = appData.openServices.filter(s => s.id !== id);
         appData.weeklyCommissionCache = null;
+        appData.monthlyCommissionCache = null;
         renderApp();
     }
 
@@ -928,6 +1303,7 @@
             appData.openServices = appData.openServices.filter(s => s.id !== id);
             saveToLocal();
             appData.weeklyCommissionCache = null;
+            appData.monthlyCommissionCache = null;
             renderApp();
         }
     }
@@ -935,21 +1311,10 @@
     function renderOpenServices() {
         if(showLogin) return renderLogin();
         
-        // Process pending commissions automatically
-        const pendingServices = appData.openServices.filter(s => s.status === 'completed' && !s.commissionProcessed);
-        if (pendingServices.length > 0) {
-            // Auto-process pending commissions
-            pendingServices.forEach(service => {
-                processOpenServiceCommission(service);
-            });
-            saveToLocal();
-            appData.weeklyCommissionCache = null;
-        }
+        const pendingServices = appData.openServices.filter(s => s.status === 'pending' || s.status === 'in-progress');
+        const completedServices = appData.openServices.filter(s => s.status === 'completed' || s.status === 'paid');
         
-        const pendingServicesList = appData.openServices.filter(s => s.status === 'pending' || s.status === 'in-progress');
-        const completedServicesList = appData.openServices.filter(s => s.status === 'completed' || s.status === 'paid');
-        
-        let pendingHtml = pendingServicesList.map(s => `
+        let pendingHtml = pendingServices.map(s => `
             <div class="open-service-card bg-gray-800 rounded-lg p-4 border border-gray-700">
                 <div class="flex justify-between items-start">
                     <div>
@@ -977,7 +1342,7 @@
             </div>
         `).join('');
         
-        let completedHtml = completedServicesList.map(s => `
+        let completedHtml = completedServices.map(s => `
             <div class="open-service-card bg-gray-800/50 rounded-lg p-4 border border-green-800/30">
                 <div class="flex justify-between items-start">
                     <div>
@@ -1006,8 +1371,7 @@
                     <p class="text-xs text-green-400 mt-1"><i class="fas fa-sync"></i> Auto-commission on completion</p>
                 </div>
                 <div class="flex gap-2">
-                    <span class="text-sm text-gray-400">Pending: ${pendingServicesList.length} | Completed: ${completedServicesList.length}</span>
-                    <button onclick="processPendingCommissions()" class="bg-cyan-600 px-3 py-1 rounded text-sm"><i class="fas fa-coins"></i> Process All Commissions</button>
+                    <span class="text-sm text-gray-400">Pending: ${pendingServices.length} | Completed: ${completedServices.length}</span>
                 </div>
             </div>
             
@@ -1063,524 +1427,6 @@
     };
     
     window.closePaymentModal = () => document.getElementById('paymentModal')?.remove();
-
-    // ======================== REPORT GENERATION ========================
-    function generateDailyReport() {
-        const today = new Date().toISOString().slice(0,10);
-        const dailyTx = appData.transactions.filter(t => t.date.startsWith(today));
-        const totalSales = dailyTx.reduce((s,t)=>s+t.total,0);
-        const totalItems = dailyTx.reduce((s,t)=>s+t.items.length,0);
-        const totalCustomers = [...new Set(dailyTx.map(t=>t.customer))].length;
-        
-        const reportData = {
-            date: today,
-            totalSales: totalSales,
-            totalTransactions: dailyTx.length,
-            totalItems: totalItems,
-            totalCustomers: totalCustomers,
-            transactions: dailyTx,
-            paymentMethods: {}
-        };
-        
-        dailyTx.forEach(t => {
-            reportData.paymentMethods[t.paymentMethod] = (reportData.paymentMethods[t.paymentMethod] || 0) + t.total;
-        });
-        
-        return reportData;
-    }
-
-    function generateWeeklyReport() {
-        const today = new Date();
-        const weekStart = new Date(today);
-        weekStart.setDate(today.getDate() - today.getDay());
-        const weekEnd = new Date(weekStart);
-        weekEnd.setDate(weekStart.getDate() + 6);
-        
-        const weeklyTx = appData.transactions.filter(t => {
-            const d = new Date(t.date);
-            return d >= weekStart && d <= weekEnd;
-        });
-        
-        const totalSales = weeklyTx.reduce((s,t)=>s+t.total,0);
-        const reportData = {
-            weekStart: weekStart.toISOString().slice(0,10),
-            weekEnd: weekEnd.toISOString().slice(0,10),
-            totalSales: totalSales,
-            totalTransactions: weeklyTx.length,
-            totalItems: weeklyTx.reduce((s,t)=>s+t.items.length,0),
-            transactions: weeklyTx,
-            dailyBreakdown: {}
-        };
-        
-        weeklyTx.forEach(t => {
-            const day = t.date.slice(0,10);
-            if(!reportData.dailyBreakdown[day]) {
-                reportData.dailyBreakdown[day] = { sales: 0, count: 0 };
-            }
-            reportData.dailyBreakdown[day].sales += t.total;
-            reportData.dailyBreakdown[day].count += 1;
-        });
-        
-        return reportData;
-    }
-
-    function generateMonthlyReport() {
-        const now = new Date();
-        const monthStart = new Date(now.getFullYear(), now.getMonth(), 1);
-        const monthEnd = new Date(now.getFullYear(), now.getMonth() + 1, 0);
-        
-        const monthlyTx = appData.transactions.filter(t => {
-            const d = new Date(t.date);
-            return d >= monthStart && d <= monthEnd;
-        });
-        
-        const totalSales = monthlyTx.reduce((s,t)=>s+t.total,0);
-        const reportData = {
-            month: now.toLocaleString('default', { month: 'long', year: 'numeric' }),
-            monthStart: monthStart.toISOString().slice(0,10),
-            monthEnd: monthEnd.toISOString().slice(0,10),
-            totalSales: totalSales,
-            totalTransactions: monthlyTx.length,
-            totalItems: monthlyTx.reduce((s,t)=>s+t.items.length,0),
-            transactions: monthlyTx,
-            weeklyBreakdown: {},
-            topServices: {}
-        };
-        
-        monthlyTx.forEach(t => {
-            const week = Math.ceil(new Date(t.date).getDate() / 7);
-            const weekKey = `Week ${week}`;
-            if(!reportData.weeklyBreakdown[weekKey]) {
-                reportData.weeklyBreakdown[weekKey] = { sales: 0, count: 0 };
-            }
-            reportData.weeklyBreakdown[weekKey].sales += t.total;
-            reportData.weeklyBreakdown[weekKey].count += 1;
-            
-            t.items.forEach(item => {
-                reportData.topServices[item.serviceName] = (reportData.topServices[item.serviceName] || 0) + item.quantity;
-            });
-        });
-        
-        return reportData;
-    }
-
-    function generateCommissionReport() {
-        const commissionData = appData.staff.map(s => {
-            const totalCommission = s.totalCommission || 0;
-            const dailyCommission = appData.transactions.filter(t => {
-                return t.staffCommissions && t.staffCommissions[s.id];
-            }).reduce((sum, t) => {
-                return sum + (t.staffCommissions[s.id]?.commission || 0);
-            }, 0);
-            
-            return {
-                name: s.name,
-                position: s.position,
-                commissionTier: s.commissionTier,
-                jobsCompleted: s.jobsCompleted || 0,
-                salesGenerated: s.salesGenerated || 0,
-                dailyCommission: dailyCommission,
-                totalCommission: totalCommission
-            };
-        });
-        
-        return commissionData;
-    }
-
-    function generateEnhancedCommissionReport() {
-        const reportData = [];
-        const today = new Date().toISOString().slice(0,10);
-        
-        appData.staff.forEach(staff => {
-            const staffTransactions = appData.transactions.filter(t => {
-                return t.staffCommissions && t.staffCommissions[staff.id];
-            });
-            
-            const dailyBreakdown = {};
-            staffTransactions.forEach(t => {
-                const date = t.date.slice(0,10);
-                if (!dailyBreakdown[date]) {
-                    dailyBreakdown[date] = { total: 0, transactions: [] };
-                }
-                const commission = t.staffCommissions[staff.id]?.commission || 0;
-                dailyBreakdown[date].total += commission;
-                dailyBreakdown[date].transactions.push({
-                    id: t.id,
-                    customer: t.customer,
-                    amount: commission,
-                    totalSale: t.total
-                });
-            });
-            
-            const totalCommission = staffTransactions.reduce((sum, t) => {
-                return sum + (t.staffCommissions[staff.id]?.commission || 0);
-            }, 0);
-            
-            const dailyCommission = staffTransactions.filter(t => t.date.startsWith(today))
-                .reduce((sum, t) => sum + (t.staffCommissions[staff.id]?.commission || 0), 0);
-            
-            reportData.push({
-                staffId: staff.id,
-                name: staff.name,
-                position: staff.position,
-                commissionTier: staff.commissionTier,
-                jobsCompleted: staff.jobsCompleted || 0,
-                salesGenerated: staff.salesGenerated || 0,
-                dailyCommission: dailyCommission,
-                totalCommission: totalCommission,
-                dailyBreakdown: dailyBreakdown,
-                transactionCount: staffTransactions.length
-            });
-        });
-        
-        return reportData;
-    }
-
-    // ======================== EDITABLE EXCEL EXPORT ========================
-    function exportEditableExcel(reportType) {
-        const wb = XLSX.utils.book_new();
-        let data = [];
-        let sheetName = '';
-        
-        if (reportType === 'daily') {
-            const report = generateDailyReport();
-            const totalCommission = appData.staff.reduce((s, st) => s + (st.totalCommission || 0), 0);
-            
-            data = [
-                ['8068 CAR SQUARE - DAILY SALES REPORT'],
-                ['Date:', new Date(report.date).toLocaleDateString()],
-                [''],
-                ['SUMMARY'],
-                ['Total Sales', `₱${report.totalSales.toFixed(2)}`],
-                ['Total Transactions', report.totalTransactions],
-                ['Total Items Sold', report.totalItems],
-                ['Total Customers', report.totalCustomers],
-                ['Total Commission Paid', `₱${totalCommission.toFixed(2)}`],
-                [''],
-                ['PAYMENT METHOD BREAKDOWN'],
-                ['Payment Method', 'Amount'],
-                ...Object.entries(report.paymentMethods).map(([method, amount]) => [method, `₱${amount.toFixed(2)}`]),
-                [''],
-                ['TRANSACTION DETAILS'],
-                ['Receipt', 'Date & Time', 'Customer', 'Vehicle', 'Plate', 'Service', 'Size', 'Price', 'Staff', 'Payment', 'Total'],
-                ...report.transactions.flatMap(t => 
-                    t.items.map(item => [
-                        t.id,
-                        new Date(t.date).toLocaleString(),
-                        t.customer,
-                        t.vehicle,
-                        t.plate,
-                        item.serviceName,
-                        item.variant,
-                        `₱${item.price.toFixed(2)}`,
-                        item.assignedStaff?.map(s => s.name).join(', ') || 'Unassigned',
-                        t.paymentMethod,
-                        `₱${t.total.toFixed(2)}`
-                    ])
-                )
-            ];
-            sheetName = 'Daily Report';
-        } else if (reportType === 'weekly') {
-            const report = generateWeeklyReport();
-            const totalCommission = appData.staff.reduce((s, st) => s + (st.totalCommission || 0), 0);
-            
-            data = [
-                ['8068 CAR SQUARE - WEEKLY SALES REPORT'],
-                ['Week:', `${new Date(report.weekStart).toLocaleDateString()} - ${new Date(report.weekEnd).toLocaleDateString()}`],
-                [''],
-                ['SUMMARY'],
-                ['Total Sales', `₱${report.totalSales.toFixed(2)}`],
-                ['Total Transactions', report.totalTransactions],
-                ['Total Items Sold', report.totalItems],
-                ['Total Commission Paid', `₱${totalCommission.toFixed(2)}`],
-                [''],
-                ['DAILY BREAKDOWN'],
-                ['Date', 'Sales', 'Transactions'],
-                ...Object.entries(report.dailyBreakdown).map(([date, data]) => [
-                    new Date(date).toLocaleDateString(),
-                    `₱${data.sales.toFixed(2)}`,
-                    data.count
-                ]),
-                [''],
-                ['TRANSACTION DETAILS'],
-                ['Receipt', 'Date & Time', 'Customer', 'Vehicle', 'Plate', 'Service', 'Size', 'Price', 'Staff', 'Payment', 'Total'],
-                ...report.transactions.flatMap(t => 
-                    t.items.map(item => [
-                        t.id,
-                        new Date(t.date).toLocaleString(),
-                        t.customer,
-                        t.vehicle,
-                        t.plate,
-                        item.serviceName,
-                        item.variant,
-                        `₱${item.price.toFixed(2)}`,
-                        item.assignedStaff?.map(s => s.name).join(', ') || 'Unassigned',
-                        t.paymentMethod,
-                        `₱${t.total.toFixed(2)}`
-                    ])
-                )
-            ];
-            sheetName = 'Weekly Report';
-        } else if (reportType === 'monthly') {
-            const report = generateMonthlyReport();
-            const totalCommission = appData.staff.reduce((s, st) => s + (st.totalCommission || 0), 0);
-            
-            data = [
-                ['8068 CAR SQUARE - MONTHLY SALES REPORT'],
-                ['Month:', report.month],
-                [''],
-                ['SUMMARY'],
-                ['Total Sales', `₱${report.totalSales.toFixed(2)}`],
-                ['Total Transactions', report.totalTransactions],
-                ['Total Items Sold', report.totalItems],
-                ['Total Commission Paid', `₱${totalCommission.toFixed(2)}`],
-                [''],
-                ['WEEKLY BREAKDOWN'],
-                ['Week', 'Sales', 'Transactions'],
-                ...Object.entries(report.weeklyBreakdown).map(([week, data]) => [
-                    week,
-                    `₱${data.sales.toFixed(2)}`,
-                    data.count
-                ]),
-                [''],
-                ['TOP SERVICES'],
-                ['Service', 'Quantity Sold'],
-                ...Object.entries(report.topServices).sort((a, b) => b[1] - a[1]),
-                [''],
-                ['TRANSACTION DETAILS'],
-                ['Receipt', 'Date & Time', 'Customer', 'Vehicle', 'Plate', 'Service', 'Size', 'Price', 'Staff', 'Payment', 'Total'],
-                ...report.transactions.flatMap(t => 
-                    t.items.map(item => [
-                        t.id,
-                        new Date(t.date).toLocaleString(),
-                        t.customer,
-                        t.vehicle,
-                        t.plate,
-                        item.serviceName,
-                        item.variant,
-                        `₱${item.price.toFixed(2)}`,
-                        item.assignedStaff?.map(s => s.name).join(', ') || 'Unassigned',
-                        t.paymentMethod,
-                        `₱${t.total.toFixed(2)}`
-                    ])
-                )
-            ];
-            sheetName = 'Monthly Report';
-        } else if (reportType === 'commission') {
-            const report = generateCommissionReport();
-            const totalCommission = report.reduce((sum, s) => sum + s.totalCommission, 0);
-            
-            data = [
-                ['8068 CAR SQUARE - EMPLOYEE COMMISSION REPORT'],
-                ['Date Generated:', new Date().toLocaleString()],
-                [''],
-                ['COMMISSION SUMMARY'],
-                ['Staff Name', 'Position', 'Commission Tier', 'Jobs Completed', 'Sales Generated', 'Daily Commission', 'Total Commission'],
-                ...report.map(s => [
-                    s.name,
-                    s.position,
-                    `${s.commissionTier}%`,
-                    s.jobsCompleted,
-                    `₱${s.salesGenerated.toFixed(2)}`,
-                    `₱${s.dailyCommission.toFixed(2)}`,
-                    `₱${s.totalCommission.toFixed(2)}`
-                ]),
-                [''],
-                ['GRAND TOTAL', '', '', '', '', `₱${report.reduce((sum, s) => sum + s.dailyCommission, 0).toFixed(2)}`, `₱${totalCommission.toFixed(2)}`]
-            ];
-            sheetName = 'Commission Report';
-        }
-        
-        const ws = XLSX.utils.aoa_to_sheet(data);
-        
-        const colWidths = [];
-        if (data.length > 0) {
-            const firstRow = data[0];
-            for (let i = 0; i < firstRow.length; i++) {
-                let maxWidth = 12;
-                for (let row of data) {
-                    if (row[i] !== undefined && row[i] !== null) {
-                        const val = String(row[i]);
-                        maxWidth = Math.max(maxWidth, val.length + 3);
-                    }
-                }
-                colWidths.push({ wch: Math.min(maxWidth, 50) });
-            }
-        }
-        ws['!cols'] = colWidths;
-        
-        const range = XLSX.utils.decode_range(ws['!ref']);
-        for (let R = range.s.r; R <= range.e.r; R++) {
-            for (let C = range.s.c; C <= range.e.c; C++) {
-                const addr = XLSX.utils.encode_cell({ r: R, c: C });
-                if (!ws[addr]) continue;
-                if (!ws[addr].s) ws[addr].s = {};
-                ws[addr].s.alignment = { wrapText: true, vertical: 'top', horizontal: R === 0 ? 'center' : 'left' };
-                if (R === 0 || R === 3 || R === 10 || R === 12) {
-                    ws[addr].s.font = { bold: true };
-                }
-            }
-        }
-        
-        XLSX.utils.book_append_sheet(wb, ws, sheetName);
-        
-        const fileName = `${reportType}_report_${new Date().toISOString().slice(0,10)}.xlsx`;
-        XLSX.writeFile(wb, fileName);
-        alert(`✅ Excel report exported as: ${fileName}\n\nThis Excel file is fully editable.`);
-    }
-
-    function exportCommissionToExcel() {
-        const report = generateEnhancedCommissionReport();
-        const wb = XLSX.utils.book_new();
-        
-        let summaryData = [
-            ['8068 CAR SQUARE - EMPLOYEE COMMISSION REPORT'],
-            ['Date Generated:', new Date().toLocaleString()],
-            [''],
-            ['COMMISSION SUMMARY'],
-            ['Staff Name', 'Position', 'Commission Tier', 'Jobs Completed', 'Sales Generated', 'Daily Commission', 'Total Commission'],
-            ...report.map(s => [
-                s.name,
-                s.position,
-                `${s.commissionTier}%`,
-                s.jobsCompleted,
-                `₱${s.salesGenerated.toFixed(2)}`,
-                `₱${s.dailyCommission.toFixed(2)}`,
-                `₱${s.totalCommission.toFixed(2)}`
-            ]),
-            [''],
-            ['GRAND TOTAL', '', '', '', '', `₱${report.reduce((sum, s) => sum + s.dailyCommission, 0).toFixed(2)}`, `₱${report.reduce((sum, s) => sum + s.totalCommission, 0).toFixed(2)}`]
-        ];
-        
-        const ws1 = XLSX.utils.aoa_to_sheet(summaryData);
-        const colWidths1 = [];
-        for (let i = 0; i < summaryData[0].length; i++) {
-            let maxWidth = 12;
-            for (let row of summaryData) {
-                if (row[i] !== undefined && row[i] !== null) {
-                    const val = String(row[i]);
-                    maxWidth = Math.max(maxWidth, val.length + 3);
-                }
-            }
-            colWidths1.push({ wch: Math.min(maxWidth, 45) });
-        }
-        ws1['!cols'] = colWidths1;
-        
-        const range1 = XLSX.utils.decode_range(ws1['!ref']);
-        for (let R = range1.s.r; R <= range1.e.r; R++) {
-            for (let C = range1.s.c; C <= range1.e.c; C++) {
-                const addr = XLSX.utils.encode_cell({ r: R, c: C });
-                if (!ws1[addr]) continue;
-                if (!ws1[addr].s) ws1[addr].s = {};
-                ws1[addr].s.alignment = { wrapText: true, vertical: 'top' };
-                if (R === 0 || R === 3) {
-                    ws1[addr].s.font = { bold: true };
-                }
-            }
-        }
-        XLSX.utils.book_append_sheet(wb, ws1, 'Summary');
-        
-        let dailyData = [
-            ['DAILY COMMISSION BREAKDOWN'],
-            [''],
-            ['Staff', 'Date', 'Transactions', 'Commission', 'Customers', 'Receipts']
-        ];
-        
-        report.forEach(s => {
-            const dates = Object.keys(s.dailyBreakdown).sort();
-            dates.forEach(date => {
-                const dayData = s.dailyBreakdown[date];
-                const customers = [...new Set(dayData.transactions.map(t => t.customer))];
-                const receipts = dayData.transactions.map(t => t.id).join(', ');
-                dailyData.push([
-                    s.name,
-                    new Date(date).toLocaleDateString(),
-                    dayData.transactions.length,
-                    `₱${dayData.total.toFixed(2)}`,
-                    customers.length,
-                    receipts
-                ]);
-            });
-        });
-        
-        const ws2 = XLSX.utils.aoa_to_sheet(dailyData);
-        const colWidths2 = [];
-        for (let i = 0; i < dailyData[0].length; i++) {
-            let maxWidth = 12;
-            for (let row of dailyData) {
-                if (row[i] !== undefined && row[i] !== null) {
-                    const val = String(row[i]);
-                    maxWidth = Math.max(maxWidth, val.length + 3);
-                }
-            }
-            colWidths2.push({ wch: Math.min(maxWidth, 45) });
-        }
-        ws2['!cols'] = colWidths2;
-        
-        const range2 = XLSX.utils.decode_range(ws2['!ref']);
-        for (let R = range2.s.r; R <= range2.e.r; R++) {
-            for (let C = range2.s.c; C <= range2.e.c; C++) {
-                const addr = XLSX.utils.encode_cell({ r: R, c: C });
-                if (!ws2[addr]) continue;
-                if (!ws2[addr].s) ws2[addr].s = {};
-                ws2[addr].s.alignment = { wrapText: true, vertical: 'top' };
-            }
-        }
-        XLSX.utils.book_append_sheet(wb, ws2, 'Daily Breakdown');
-        
-        let txData = [
-            ['TRANSACTION DETAILS'],
-            [''],
-            ['Staff', 'Date', 'Receipt', 'Customer', 'Commission', 'Total Sale']
-        ];
-        
-        appData.transactions.forEach(t => {
-            if (t.staffCommissions) {
-                Object.entries(t.staffCommissions).forEach(([staffId, data]) => {
-                    const staff = appData.staff.find(s => s.id === parseInt(staffId));
-                    if (staff) {
-                        txData.push([
-                            staff.name,
-                            new Date(t.date).toLocaleDateString(),
-                            t.id,
-                            t.customer,
-                            `₱${data.commission.toFixed(2)}`,
-                            `₱${t.total.toFixed(2)}`
-                        ]);
-                    }
-                });
-            }
-        });
-        
-        const ws3 = XLSX.utils.aoa_to_sheet(txData);
-        const colWidths3 = [];
-        for (let i = 0; i < txData[0].length; i++) {
-            let maxWidth = 12;
-            for (let row of txData) {
-                if (row[i] !== undefined && row[i] !== null) {
-                    const val = String(row[i]);
-                    maxWidth = Math.max(maxWidth, val.length + 3);
-                }
-            }
-            colWidths3.push({ wch: Math.min(maxWidth, 45) });
-        }
-        ws3['!cols'] = colWidths3;
-        
-        const range3 = XLSX.utils.decode_range(ws3['!ref']);
-        for (let R = range3.s.r; R <= range3.e.r; R++) {
-            for (let C = range3.s.c; C <= range3.e.c; C++) {
-                const addr = XLSX.utils.encode_cell({ r: R, c: C });
-                if (!ws3[addr]) continue;
-                if (!ws3[addr].s) ws3[addr].s = {};
-                ws3[addr].s.alignment = { wrapText: true, vertical: 'top' };
-            }
-        }
-        XLSX.utils.book_append_sheet(wb, ws3, 'Transactions');
-        
-        const fileName = `commission_report_${new Date().toISOString().slice(0,10)}.xlsx`;
-        XLSX.writeFile(wb, fileName);
-        alert(`✅ Enhanced commission report exported as: ${fileName}\n\nThis Excel file is fully editable.`);
-    }
 
     // ======================== STAFF FUNCTIONS ========================
     function renderStaffDashboard() {
@@ -1758,132 +1604,6 @@
         win.document.close();
         win.print();
     };
-
-    // ======================== REPORTS DASHBOARD ========================
-    function renderReports() {
-        if(showLogin) return renderLogin();
-        const dailyReport = generateDailyReport();
-        const weeklyReport = generateWeeklyReport();
-        const monthlyReport = generateMonthlyReport();
-        const enhancedCommission = generateEnhancedCommissionReport();
-        const totalDailyCommission = enhancedCommission.reduce((sum, s) => sum + s.dailyCommission, 0);
-        const totalCommission = enhancedCommission.reduce((sum, s) => sum + s.totalCommission, 0);
-        
-        return `<div class="card-premium p-6">
-            <h2 class="text-2xl font-bold mb-4"><i class="fas fa-file-alt"></i> Reports Dashboard</h2>
-            
-            <div class="grid lg:grid-cols-4 gap-4 mb-6">
-                <div class="bg-gray-800 p-4 rounded-lg text-center">
-                    <div class="text-gray-400 text-sm">Total Transactions</div>
-                    <div class="text-2xl font-bold text-cyan-400">${appData.transactions.length}</div>
-                </div>
-                <div class="bg-gray-800 p-4 rounded-lg text-center">
-                    <div class="text-gray-400 text-sm">Total Revenue</div>
-                    <div class="text-2xl font-bold text-green-400">₱${appData.transactions.reduce((a,b)=>a+b.total,0).toFixed(2)}</div>
-                </div>
-                <div class="bg-gray-800 p-4 rounded-lg text-center">
-                    <div class="text-gray-400 text-sm">Total Customers</div>
-                    <div class="text-2xl font-bold text-yellow-400">${appData.customers.length}</div>
-                </div>
-                <div class="bg-gray-800 p-4 rounded-lg text-center">
-                    <div class="text-gray-400 text-sm">Total Staff</div>
-                    <div class="text-2xl font-bold text-purple-400">${appData.staff.length}</div>
-                </div>
-            </div>
-            
-            <div class="grid lg:grid-cols-3 gap-4 mb-6">
-                <div class="bg-gray-800 p-4 rounded-lg">
-                    <h3 class="text-lg font-bold text-cyan-400 mb-2"><i class="fas fa-calendar-day"></i> Daily Summary</h3>
-                    <div class="text-sm space-y-1">
-                        <div class="flex justify-between"><span>Date:</span><span>${dailyReport.date}</span></div>
-                        <div class="flex justify-between"><span>Sales:</span><span class="text-green-400">₱${dailyReport.totalSales.toFixed(2)}</span></div>
-                        <div class="flex justify-between"><span>Transactions:</span><span>${dailyReport.totalTransactions}</span></div>
-                        <div class="flex justify-between"><span>Customers:</span><span>${dailyReport.totalCustomers}</span></div>
-                    </div>
-                    <button onclick="exportEditableExcel('daily')" class="excel-export-btn w-full mt-2 p-2 rounded text-sm text-white"><i class="fas fa-file-excel"></i> Export Editable Excel</button>
-                </div>
-                <div class="bg-gray-800 p-4 rounded-lg">
-                    <h3 class="text-lg font-bold text-green-400 mb-2"><i class="fas fa-calendar-week"></i> Weekly Summary</h3>
-                    <div class="text-sm space-y-1">
-                        <div class="flex justify-between"><span>Week:</span><span>${weeklyReport.weekStart} - ${weeklyReport.weekEnd}</span></div>
-                        <div class="flex justify-between"><span>Sales:</span><span class="text-green-400">₱${weeklyReport.totalSales.toFixed(2)}</span></div>
-                        <div class="flex justify-between"><span>Transactions:</span><span>${weeklyReport.totalTransactions}</span></div>
-                        <div class="flex justify-between"><span>Items Sold:</span><span>${weeklyReport.totalItems}</span></div>
-                    </div>
-                    <button onclick="exportEditableExcel('weekly')" class="excel-export-btn w-full mt-2 p-2 rounded text-sm text-white"><i class="fas fa-file-excel"></i> Export Editable Excel</button>
-                </div>
-                <div class="bg-gray-800 p-4 rounded-lg">
-                    <h3 class="text-lg font-bold text-yellow-400 mb-2"><i class="fas fa-calendar-alt"></i> Monthly Summary</h3>
-                    <div class="text-sm space-y-1">
-                        <div class="flex justify-between"><span>Month:</span><span>${monthlyReport.month}</span></div>
-                        <div class="flex justify-between"><span>Sales:</span><span class="text-green-400">₱${monthlyReport.totalSales.toFixed(2)}</span></div>
-                        <div class="flex justify-between"><span>Transactions:</span><span>${monthlyReport.totalTransactions}</span></div>
-                        <div class="flex justify-between"><span>Items Sold:</span><span>${monthlyReport.totalItems}</span></div>
-                    </div>
-                    <button onclick="exportEditableExcel('monthly')" class="excel-export-btn w-full mt-2 p-2 rounded text-sm text-white"><i class="fas fa-file-excel"></i> Export Editable Excel</button>
-                </div>
-            </div>
-            
-            <div class="bg-gray-800 p-4 rounded-lg">
-                <div class="flex justify-between items-center mb-3">
-                    <h3 class="text-lg font-bold text-purple-400"><i class="fas fa-file-invoice-dollar"></i> Enhanced Commission Report</h3>
-                    <div class="flex gap-2">
-                        <button onclick="exportCommissionToExcel()" class="excel-export-btn px-4 py-2 rounded text-sm text-white"><i class="fas fa-file-excel"></i> Export Editable Excel</button>
-                        <button onclick="exportEditableExcel('commission')" class="bg-blue-600 px-4 py-2 rounded text-sm text-white"><i class="fas fa-file-excel"></i> Basic Report</button>
-                    </div>
-                </div>
-                <div class="grid grid-cols-2 md:grid-cols-4 gap-2 mb-3">
-                    <div class="bg-gray-700 p-2 rounded text-center text-xs">
-                        <div class="text-gray-400">Daily Commission</div>
-                        <div class="text-lg font-bold text-cyan-400">₱${totalDailyCommission.toFixed(2)}</div>
-                    </div>
-                    <div class="bg-gray-700 p-2 rounded text-center text-xs">
-                        <div class="text-gray-400">Total Commission</div>
-                        <div class="text-lg font-bold text-green-400">₱${totalCommission.toFixed(2)}</div>
-                    </div>
-                    <div class="bg-gray-700 p-2 rounded text-center text-xs">
-                        <div class="text-gray-400">Total Staff</div>
-                        <div class="text-lg font-bold text-yellow-400">${appData.staff.length}</div>
-                    </div>
-                    <div class="bg-gray-700 p-2 rounded text-center text-xs">
-                        <div class="text-gray-400">Total Jobs</div>
-                        <div class="text-lg font-bold text-purple-400">${appData.staff.reduce((sum, s) => sum + (s.jobsCompleted || 0), 0)}</div>
-                    </div>
-                </div>
-                <div class="overflow-x-auto max-h-80 overflow-y-auto">
-                    <table class="w-full text-sm">
-                        <thead class="sticky top-0 bg-gray-900 border-b border-purple-400">
-                            <tr><th>Staff Name</th><th>Position</th><th>Tier</th><th>Jobs</th><th>Sales</th><th>Daily Commission</th><th>Total Commission</th><th>Daily Breakdown</th></tr>
-                        </thead>
-                        <tbody>
-                            ${enhancedCommission.map(s => {
-                                const dates = Object.keys(s.dailyBreakdown).sort().slice(0,3);
-                                const breakdownHtml = dates.map(date => 
-                                    `<div class="text-xs text-gray-400">${new Date(date).toLocaleDateString()}: ₱${s.dailyBreakdown[date].total.toFixed(2)} (${s.dailyBreakdown[date].transactions.length} tx)</div>`
-                                ).join('');
-                                return `<tr class="border-b border-gray-700 commission-detail-row">
-                                    <td class="py-2 font-semibold">${s.name}</td>
-                                    <td>${s.position}</td>
-                                    <td><span class="commission-badge">${s.commissionTier}%</span></td>
-                                    <td>${s.jobsCompleted}</td>
-                                    <td>₱${s.salesGenerated.toFixed(2)}</td>
-                                    <td class="text-cyan-400 font-bold">₱${s.dailyCommission.toFixed(2)}</td>
-                                    <td class="text-green-400 font-bold">₱${s.totalCommission.toFixed(2)}</td>
-                                    <td class="text-xs">${breakdownHtml || 'No daily data'}</td>
-                                </tr>`;
-                            }).join('')}
-                            <tr class="border-t-2 border-purple-400 font-bold">
-                                <td colspan="5" class="py-2 text-right">GRAND TOTAL:</td>
-                                <td class="text-cyan-400">₱${totalDailyCommission.toFixed(2)}</td>
-                                <td class="text-green-400">₱${totalCommission.toFixed(2)}</td>
-                                <td></td>
-                            </tr>
-                        </tbody>
-                    </table>
-                </div>
-            </div>
-        </div>`;
-    }
 
     // ======================== DASHBOARD ========================
     function renderDashboard() {
@@ -2109,6 +1829,7 @@
         loyaltyPointsUsed = 0;
         cartRemarks = "";
         appData.weeklyCommissionCache = null;
+        appData.monthlyCommissionCache = null;
         renderApp();
     };
 
@@ -2210,6 +1931,7 @@
         print58mmReceipt(transaction);
         posCart = []; selectedCustomer = null; vehicleInfo = { plate: "", model: "", size: "Medium" }; discount = 0; loyaltyPointsUsed = 0; cashTendered = 0; cartRemarks = "";
         appData.weeklyCommissionCache = null;
+        appData.monthlyCommissionCache = null;
         renderApp();
     }
 
@@ -2237,31 +1959,33 @@
         }
         
         const adminPanels = [
+            { id: 'transactions', icon: 'fa-receipt', label: 'Transactions' },
             { id: 'services', icon: 'fa-concierge-bell', label: 'Services' },
             { id: 'categories', icon: 'fa-tags', label: 'Categories' },
             { id: 'staff', icon: 'fa-users', label: 'Staff' },
             { id: 'inventory', icon: 'fa-boxes', label: 'Inventory' },
             { id: 'customers', icon: 'fa-user-friends', label: 'Customers' },
             { id: 'expenses', icon: 'fa-money-bill-wave', label: 'Expenses' },
-            { id: 'transactions', icon: 'fa-receipt', label: 'Transactions' },
             { id: 'commissions', icon: 'fa-percent', label: 'Commission Matrix' },
             { id: 'users', icon: 'fa-user-shield', label: 'Users' },
             { id: 'system', icon: 'fa-cogs', label: 'System Settings' },
-            { id: 'weeklycommission', icon: 'fa-calendar-week', label: 'Weekly Commission' }
+            { id: 'weeklycommission', icon: 'fa-calendar-week', label: 'Weekly Commission' },
+            { id: 'monthlycommission', icon: 'fa-calendar-alt', label: 'Monthly Commission' }
         ];
         
         let content = '';
-        if(currentAdminPanel === 'services') content = renderAdminServices();
+        if(currentAdminPanel === 'transactions') content = renderAdminTransactions();
+        else if(currentAdminPanel === 'services') content = renderAdminServices();
         else if(currentAdminPanel === 'categories') content = renderAdminCategories();
         else if(currentAdminPanel === 'staff') content = renderStaffDashboard();
         else if(currentAdminPanel === 'inventory') content = renderInventory();
         else if(currentAdminPanel === 'customers') content = renderCustomers();
         else if(currentAdminPanel === 'expenses') content = renderAdminExpenses();
-        else if(currentAdminPanel === 'transactions') content = renderAdminTransactions();
         else if(currentAdminPanel === 'commissions') content = renderAdminCommissions();
         else if(currentAdminPanel === 'users') content = renderAdminUsers();
         else if(currentAdminPanel === 'system') content = renderAdminSystem();
         else if(currentAdminPanel === 'weeklycommission') content = renderWeeklyCommissionReport();
+        else if(currentAdminPanel === 'monthlycommission') content = renderMonthlyCommissionReport();
         
         return `<div class="admin-grid">
             <div class="admin-sidebar">
@@ -2276,8 +2000,7 @@
                         <div>TX: ${appData.transactions.length}</div>
                     </div>
                     <div class="mt-2 text-cyan-400 text-[10px]">Last Saved: ${new Date().toLocaleTimeString()}</div>
-                    <div class="mt-1 text-gray-500 text-[10px]">👤 ${appData.currentUser?.name} (${appData.currentUser?.role})</div>
-                    <div class="mt-1 text-green-400 text-[10px]">✅ Auto-Commission Enabled</div>
+                    <div class="mt-1 text-green-400 text-[10px]">✅ Real-time Commission Updates</div>
                 </div>
             </div>
             <div class="admin-content card-premium p-5">${content}</div>
@@ -2511,96 +2234,6 @@
     window.editExpenseDate = (id) => { const e = appData.expenses.find(ex => ex.id === id); if(e) { const val = prompt("Edit date (YYYY-MM-DD):", e.date); if(val !== null) { e.date = val; saveToLocal(); renderApp(); } } };
     window.deleteExpenseItem = (id) => { if(confirm("Delete this expense?")) { appData.expenses = appData.expenses.filter(e => e.id !== id); saveToLocal(); renderApp(); } };
 
-    // ======================== ADMIN - TRANSACTIONS ========================
-    function renderAdminTransactions() {
-        if(showLogin) return renderLogin();
-        const totalIncome = appData.transactions.reduce((s,t)=>s+t.total,0);
-        return `<h3 class="text-xl font-bold mb-4"><i class="fas fa-receipt"></i> Transactions Management</h3>
-            <button onclick="showAddTransactionModal()" class="bg-green-600 px-3 py-1 rounded mb-4">+ Add Manual Transaction</button>
-            <div class="overflow-x-auto max-h-96 overflow-y-auto">
-                <table class="w-full text-sm">
-                    <thead class="sticky top-0 bg-gray-900 border-b border-cyan-400">
-                        <tr><th>Receipt</th><th>Date & Time</th><th>Customer</th><th>Vehicle</th><th>Total</th><th>Payment</th><th>Actions</th></tr>
-                    </thead>
-                    <tbody>
-                        ${appData.transactions.map(t => `
-                            <tr class="border-b border-gray-700 hover:bg-gray-800 transition">
-                                <td class="py-2 font-mono text-xs">${t.id}</td>
-                                <td><span class="editable-field cursor-pointer" onclick="editTransactionDate('${t.id}')">${new Date(t.date).toLocaleString()}</span></td>
-                                <td><span class="editable-field cursor-pointer" onclick="editTransactionCustomer('${t.id}')">${t.customer}</span></td>
-                                <td>${t.vehicle} | ${t.plate}</td>
-                                <td><span class="editable-field cursor-pointer text-green-400 font-bold" onclick="editTransactionAmount('${t.id}')">₱${t.total.toFixed(2)}</span></td>
-                                <td>${t.paymentMethod || "Cash"}</td>
-                                <td>
-                                    <button onclick="editTransactionFull('${t.id}')" class="action-btn bg-cyan-600 text-white hover:bg-cyan-700"><i class="fas fa-edit"></i></button>
-                                    <button onclick="deleteTransactionItem('${t.id}')" class="action-btn bg-red-600 text-white hover:bg-red-700"><i class="fas fa-trash"></i></button>
-                                </td>
-                            </tr>
-                        `).join('')}
-                    </tbody>
-                    <tfoot class="sticky bottom-0 bg-gray-900 border-t border-cyan-400">
-                        <tr><td colspan="4" class="py-2 text-right font-bold">GRAND TOTAL:</td><td class="py-2 text-green-400 font-bold">₱${totalIncome.toFixed(2)}</td><td colspan="2"></td></tr>
-                    </tfoot>
-                </table>
-            </div>`;
-    }
-
-    window.showAddTransactionModal = () => {
-        let modalHtml = `<div id="adminModal" class="modal"><div class="modal-content"><h3 class="text-xl font-bold mb-4">Add Manual Transaction</h3><div class="space-y-3"><div><label>Customer Name</label><input type="text" id="txCustomerInput" class="w-full bg-gray-800 p-2 rounded" value="Walk-in Customer"></div><div><label>Amount</label><input type="number" id="txAmountInput" class="w-full bg-gray-800 p-2 rounded"></div><div><label>Vehicle</label><input type="text" id="txVehicleInput" class="w-full bg-gray-800 p-2 rounded" placeholder="Toyota Vios"></div><div><label>Plate</label><input type="text" id="txPlateInput" class="w-full bg-gray-800 p-2 rounded"></div><div><label>Payment Method</label><select id="txPaymentInput" class="w-full bg-gray-800 p-2 rounded"><option>Cash</option><option>GCash</option><option>Maya</option><option>Credit Card</option><option>Bank Transfer</option></select></div><div class="flex gap-3 mt-4"><button onclick="confirmAddTransaction()" class="btn-neon flex-1 p-2 rounded">Add</button><button onclick="closeAdminModal()" class="bg-gray-700 flex-1 p-2 rounded">Cancel</button></div></div></div></div>`;
-        document.body.insertAdjacentHTML('beforeend', modalHtml);
-    };
-    window.confirmAddTransaction = () => {
-        const customer = document.getElementById('txCustomerInput')?.value || "Walk-in Customer";
-        const amount = parseFloat(document.getElementById('txAmountInput')?.value);
-        const vehicle = document.getElementById('txVehicleInput')?.value || "N/A";
-        const plate = document.getElementById('txPlateInput')?.value || "N/A";
-        const payment = document.getElementById('txPaymentInput')?.value || "Cash";
-        if(isNaN(amount) || amount <= 0) { alert("Valid amount required!"); return; }
-        const transaction = {
-            id: generateReceiptNo(),
-            date: new Date().toISOString(),
-            customer: customer,
-            vehicle: vehicle,
-            plate: plate,
-            items: [{ serviceName: "Manual Entry", variant: "Standard", price: amount, quantity: 1, total: amount, assignedStaff: [], remarks: "Manual transaction" }],
-            subtotal: amount,
-            discount: 0,
-            loyaltyUsed: 0,
-            total: amount,
-            paymentMethod: payment,
-            cashTendered: amount,
-            change: 0,
-            remarks: "Manual transaction added via admin"
-        };
-        appData.transactions.unshift(transaction);
-        saveToLocal(); closeAdminModal(); renderApp();
-    };
-    window.editTransactionFull = (id) => {
-        const t = appData.transactions.find(tx => tx.id === id);
-        if(!t) return;
-        let modalHtml = `<div id="adminModal" class="modal"><div class="modal-content"><h3 class="text-xl font-bold mb-4">Edit Transaction</h3><div class="space-y-3"><div><label>Customer</label><input type="text" id="editTxCustomer" class="w-full bg-gray-800 p-2 rounded" value="${t.customer}"></div><div><label>Amount</label><input type="number" id="editTxAmount" class="w-full bg-gray-800 p-2 rounded" value="${t.total}"></div><div><label>Vehicle</label><input type="text" id="editTxVehicle" class="w-full bg-gray-800 p-2 rounded" value="${t.vehicle}"></div><div><label>Plate</label><input type="text" id="editTxPlate" class="w-full bg-gray-800 p-2 rounded" value="${t.plate}"></div><div><label>Payment</label><select id="editTxPayment" class="w-full bg-gray-800 p-2 rounded"><option ${t.paymentMethod==="Cash"?"selected":""}>Cash</option><option ${t.paymentMethod==="GCash"?"selected":""}>GCash</option><option ${t.paymentMethod==="Maya"?"selected":""}>Maya</option><option ${t.paymentMethod==="Credit Card"?"selected":""}>Credit Card</option><option ${t.paymentMethod==="Bank Transfer"?"selected":""}>Bank Transfer</option></select></div><div class="flex gap-3 mt-4"><button onclick="confirmEditTransaction('${id}')" class="btn-neon flex-1 p-2 rounded">Update</button><button onclick="closeAdminModal()" class="bg-gray-700 flex-1 p-2 rounded">Cancel</button></div></div></div></div>`;
-        document.body.insertAdjacentHTML('beforeend', modalHtml);
-    };
-    window.confirmEditTransaction = (id) => {
-        const t = appData.transactions.find(tx => tx.id === id);
-        if(!t) return;
-        const customer = document.getElementById('editTxCustomer')?.value;
-        const amount = parseFloat(document.getElementById('editTxAmount')?.value);
-        const vehicle = document.getElementById('editTxVehicle')?.value;
-        const plate = document.getElementById('editTxPlate')?.value;
-        const payment = document.getElementById('editTxPayment')?.value;
-        if(customer) t.customer = customer;
-        if(!isNaN(amount) && amount > 0) { t.total = amount; t.subtotal = amount; }
-        if(vehicle) t.vehicle = vehicle;
-        if(plate) t.plate = plate;
-        if(payment) t.paymentMethod = payment;
-        saveToLocal(); closeAdminModal(); renderApp();
-    };
-    window.editTransactionAmount = (id) => { const t = appData.transactions.find(tx => tx.id === id); if(t) { const val = parseFloat(prompt("Edit amount:", t.total)); if(!isNaN(val) && val > 0) { t.total = val; t.subtotal = val; saveToLocal(); renderApp(); } } };
-    window.editTransactionCustomer = (id) => { const t = appData.transactions.find(tx => tx.id === id); if(t) { const val = prompt("Edit customer:", t.customer); if(val !== null) { t.customer = val; saveToLocal(); renderApp(); } } };
-    window.editTransactionDate = (id) => { const t = appData.transactions.find(tx => tx.id === id); if(t) { const val = prompt("Edit date (YYYY-MM-DD):", new Date(t.date).toISOString().slice(0,10)); if(val !== null) { t.date = new Date(val).toISOString(); saveToLocal(); renderApp(); } } };
-    window.deleteTransactionItem = (id) => { if(confirm("Delete this transaction?")) { appData.transactions = appData.transactions.filter(t => t.id !== id); saveToLocal(); renderApp(); } };
-
     // ======================== ADMIN - COMMISSIONS ========================
     function renderAdminCommissions() {
         if(showLogin) return renderLogin();
@@ -2802,13 +2435,12 @@
             </div>
             <div class="mt-4 p-3 bg-gray-800 rounded-lg text-xs">
                 <div class="text-gray-400">System Info</div>
-                <div>Version: 7.7 Enterprise (Auto-Commission) | Last Saved: ${localStorage.getItem('8068_system_last_saved') ? new Date(localStorage.getItem('8068_system_last_saved')).toLocaleString() : 'Never'}</div>
+                <div>Version: 7.8 Enterprise (Real-time Commission) | Last Saved: ${localStorage.getItem('8068_system_last_saved') ? new Date(localStorage.getItem('8068_system_last_saved')).toLocaleString() : 'Never'}</div>
                 <div>Records: ${appData.transactions.length} TX | ${appData.customers.length} Customers | ${appData.staff.length} Staff</div>
                 <div>Commission Entries: ${Object.keys(appData.commissionMatrix || {}).length}</div>
                 <div>Open Services: ${appData.openServices.filter(s=>s.status!=='completed').length}</div>
-                <div>Inventory Items: ${appData.inventory.length}</div>
                 <div>Receipt Format: 58mm Thermal with Auto-Cut</div>
-                <div class="mt-1 text-green-400">✅ Auto-Commission: Enabled on service completion</div>
+                <div class="mt-1 text-green-400">✅ Real-time Commission Updates on Edit/Delete</div>
             </div>
         </div>`;
     }
@@ -2885,6 +2517,7 @@
 
     window.closeAdminModal = () => document.getElementById('adminModal')?.remove();
     window.navigateAdmin = (panel) => { currentAdminPanel = panel; renderApp(); };
+    window.closePaymentModal = () => document.getElementById('paymentModal')?.remove();
 
     // ======================== MAIN RENDER ========================
     function renderApp() {
@@ -2901,9 +2534,9 @@
         else if(currentView === "openservices") content = renderOpenServices();
         else if(currentView === "customers") content = renderCustomers();
         else if(currentView === "staff") content = renderStaffDashboard();
-        else if(currentView === "reports") content = renderReports();
         else if(currentView === "admin") content = renderAdminDashboard();
         else if(currentView === "weeklycommission") content = renderWeeklyCommissionReport();
+        else if(currentView === "monthlycommission") content = renderMonthlyCommissionReport();
         main.innerHTML = content;
         setTimeout(() => {
             document.getElementById('plateInput')?.addEventListener('input', (e) => vehicleInfo.plate = e.target.value);
@@ -2930,30 +2563,30 @@
             <div class="flex flex-wrap justify-between items-center border-b border-blue-800 pb-4 mb-6">
                 <div class="flex items-center gap-3">
                     ${appData.systemSettings.companyLogo ? `<img src="${appData.systemSettings.companyLogo}" class="company-logo" alt="Logo">` : ''}
-                    <div><h1 class="text-3xl font-extrabold glow-text">${appData.systemSettings.companyName}</h1><p class="text-sm text-gray-400">${appData.systemSettings.tagline} | v7.7</p></div>
+                    <div><h1 class="text-3xl font-extrabold glow-text">${appData.systemSettings.companyName}</h1><p class="text-sm text-gray-400">${appData.systemSettings.tagline} | v7.8</p></div>
                 </div>
                 <div class="flex gap-2 flex-wrap mt-2">
                     <button onclick="navigate('dashboard')" class="px-3 py-2 bg-gray-900 rounded-lg neon-border text-sm"><i class="fas fa-chart-line"></i> Dashboard</button>
                     <button onclick="navigate('pos')" class="px-3 py-2 bg-gray-900 rounded-lg neon-border text-sm"><i class="fas fa-cash-register"></i> POS</button>
                     <button onclick="navigate('openservices')" class="px-3 py-2 bg-orange-900 rounded-lg neon-border text-sm"><i class="fas fa-clipboard-list"></i> Open Services</button>
                     <button onclick="navigate('staff')" class="px-3 py-2 bg-gray-900 rounded-lg neon-border text-sm"><i class="fas fa-id-badge"></i> Staff</button>
-                    <button onclick="navigate('reports')" class="px-3 py-2 bg-green-900 rounded-lg neon-border text-sm"><i class="fas fa-file-alt"></i> Reports</button>
                     <button onclick="navigate('customers')" class="px-3 py-2 bg-gray-900 rounded-lg neon-border text-sm"><i class="fas fa-users"></i> Customers</button>
                     <button onclick="navigate('admin')" class="px-3 py-2 bg-purple-900 rounded-lg neon-border text-sm"><i class="fas fa-crown"></i> Admin</button>
                     <button onclick="navigate('weeklycommission')" class="px-3 py-2 bg-yellow-900 rounded-lg neon-border text-sm"><i class="fas fa-calendar-week"></i> Weekly Comm.</button>
+                    <button onclick="navigate('monthlycommission')" class="px-3 py-2 bg-blue-900 rounded-lg neon-border text-sm"><i class="fas fa-calendar-alt"></i> Monthly Comm.</button>
                 </div>
             </div>
             <div id="mainContent"></div>
-            <footer class="text-center text-gray-500 text-sm mt-12 pt-4 border-t border-gray-800">${appData.systemSettings.companyName} | 58mm Receipt | Auto-Cut | Auto-Commission v7.7</footer>
+            <footer class="text-center text-gray-500 text-sm mt-12 pt-4 border-t border-gray-800">${appData.systemSettings.companyName} | 58mm Receipt | Auto-Cut | Real-time Commission v7.8</footer>
         </div>
     `;
     renderApp();
     saveToLocal();
 
-    console.log('%c8068 CAR SQUARE - Enterprise Management System v7.7', 'color: #00d4ff; font-size: 20px; font-weight: bold;');
-    console.log(`%cRecords: ${appData.transactions.length} TX | ${appData.customers.length} Customers | ${appData.staff.length} Staff | ${appData.openServices.filter(s=>s.status!=='completed').length} Open Services`, 'color: #00ff88;');
-    console.log('%c✅ Auto-Commission: Generated when services are completed', 'color: #00ff88;');
-    console.log('%cReceipt Format: 58mm Thermal with Auto-Cut ✓', 'color: #ffaa00;');
+    console.log('%c8068 CAR SQUARE - Enterprise Management System v7.8', 'color: #00d4ff; font-size: 20px; font-weight: bold;');
+    console.log(`%cRecords: ${appData.transactions.length} TX | ${appData.customers.length} Customers | ${appData.staff.length} Staff`, 'color: #00ff88;');
+    console.log('%c✅ Real-time Commission Updates on Edit/Delete', 'color: #00ff88;');
+    console.log('%c📅 Weekly & Monthly Commission Reports with Calendar Dates', 'color: #ffaa00;');
 </script>
 </body>
 </html>
