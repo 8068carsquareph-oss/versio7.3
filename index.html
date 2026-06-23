@@ -129,6 +129,10 @@
         .settings-group label { color: #888; font-size: 12px; display: block; margin-bottom: 4px; }
         .settings-group input, .settings-group select { background: #0a0a0a; border: 1px solid #333; border-radius: 6px; padding: 6px 12px; color: white; width: 100%; }
         .settings-group input:focus, .settings-group select:focus { border-color: #00d4ff; outline: none; }
+        .tab-container { display: flex; gap: 4px; flex-wrap: wrap; margin-bottom: 12px; }
+        .tab-btn { background: #1a1a1a; border: 1px solid #333; padding: 6px 14px; border-radius: 6px; color: #aaa; cursor: pointer; transition: all 0.2s; font-size: 12px; }
+        .tab-btn:hover { border-color: #00d4ff; color: #fff; }
+        .tab-btn.active { background: rgba(0,212,255,0.15); border-color: #00d4ff; color: #00d4ff; }
     </style>
 </head>
 <body class="text-white">
@@ -261,7 +265,7 @@
         return "Specialty";
     }
 
-    // Load saved data - preserve all records
+    // Load saved data - preserve all records from v8.4
     const saved = localStorage.getItem("8068_enterprise_v8");
     if(saved) {
         try {
@@ -288,7 +292,9 @@
             if (appData.systemSettings.showVAT === undefined) appData.systemSettings.showVAT = false;
             if (!appData.version) appData.version = '8.5';
             appData.version = '8.5';
-        } catch(e) {}
+        } catch(e) {
+            console.warn('Error loading saved data:', e);
+        }
     }
 
     function saveToLocal() {
