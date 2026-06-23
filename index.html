@@ -117,10 +117,19 @@
             width: 72px;
             height: 72px;
             flex-shrink: 0;
+            border-radius: 12px;
+            overflow: hidden;
+            background: #0a0a0a;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            border: 1px solid rgba(0, 212, 255, 0.2);
         }
-        .logo-icon svg {
+        .logo-icon img {
             width: 100%;
             height: 100%;
+            object-fit: contain;
+            display: block;
         }
         .brand-text {
             display: flex;
@@ -4067,14 +4076,12 @@
             <!-- ===== COMPACT HEADER ===== -->
             <header class="main-header">
                 <div class="logo-container">
-                    <!-- CS Monogram Logo -->
-                    <div class="logo-icon">
-                        <svg viewBox="0 0 100 100" fill="none" xmlns="http://www.w3.org/2000/svg">
-                            <rect x="5" y="5" width="90" height="90" rx="15" stroke="#00d4ff" stroke-width="3" fill="#0a0a0a"/>
-                            <circle cx="50" cy="50" r="35" stroke="#00d4ff" stroke-width="2" fill="none"/>
-                            <text x="50" y="58" font-family="Inter, sans-serif" font-size="38" font-weight="700" fill="#00d4ff" text-anchor="middle" dominant-baseline="central">CS</text>
-                            <circle cx="50" cy="50" r="42" stroke="rgba(0,212,255,0.2)" stroke-width="1" stroke-dasharray="4 4" fill="none"/>
-                        </svg>
+                    <!-- Company Logo (Uploaded) or Fallback Text -->
+                    <div class="logo-icon" id="headerLogoContainer">
+                        ${appData.systemSettings.companyLogo ? 
+                            `<img src="${appData.systemSettings.companyLogo}" alt="Company Logo" class="w-full h-full object-contain">` :
+                            `<div class="w-full h-full flex items-center justify-center text-cyan-400 font-bold text-lg border border-cyan-400/30 rounded-lg bg-gray-900">CS</div>`
+                        }
                     </div>
                     <div class="brand-text">
                         <span class="company-title">8068 CAR SQUARE</span>
@@ -4117,6 +4124,47 @@
             <footer class="text-center text-gray-500 text-sm mt-8 pt-4 border-t border-gray-800">${appData.systemSettings.companyName} | v8.4 Stable | All Export & Print Functions Working</footer>
         </div>
     `;
+
+    // Function to update header logo when logo is uploaded/removed
+    const originalUploadLogo = window.uploadLogo;
+    window.uploadLogo = function() {
+        const input = document.createElement('input');
+        input.type = 'file';
+        input.accept = 'image/*';
+        input.onchange = function(e) {
+            const file = e.target.files[0];
+            if (file) {
+                const reader = new FileReader();
+                reader.onload = function(event) {
+                    appData.systemSettings.companyLogo = event.target.result;
+                    saveToLocal();
+                    // Update header logo
+                    const container = document.getElementById('headerLogoContainer');
+                    if (container) {
+                        container.innerHTML = `<img src="${appData.systemSettings.companyLogo}" alt="Company Logo" class="w-full h-full object-contain">`;
+                    }
+                    renderApp();
+                    alert('Logo uploaded successfully!');
+                };
+                reader.readAsDataURL(file);
+            }
+        };
+        input.click();
+    };
+
+    window.removeLogo = function() {
+        if(confirm('Remove company logo?')) {
+            appData.systemSettings.companyLogo = null;
+            saveToLocal();
+            const container = document.getElementById('headerLogoContainer');
+            if (container) {
+                container.innerHTML = `<div class="w-full h-full flex items-center justify-center text-cyan-400 font-bold text-lg border border-cyan-400/30 rounded-lg bg-gray-900">CS</div>`;
+            }
+            renderApp();
+            alert('Logo removed.');
+        }
+    };
+
     renderApp();
     saveToLocal();
 
