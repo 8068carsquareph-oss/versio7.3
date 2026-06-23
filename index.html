@@ -212,14 +212,14 @@ const storage = firebase.storage();
         auth.signInWithEmailAndPassword(email, password)
             .then(userCredential => {
                 currentUser = userCredential.user;
-                return db.collection('users').doc(currentUser.uid).get();
+                return db.collection('users').doc('owner').get();
             })
             .then(doc => {
                 if (doc.exists) {
                     currentUserRole = doc.data().role || 'Staff';
                 } else {
                     // Create default user record
-                    return db.collection('users').doc(currentUser.uid).set({
+                    return db.collection('users').doc('owner').set({
                         email: currentUser.email,
                         name: currentUser.displayName || currentUser.email,
                         role: 'Staff',
