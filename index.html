@@ -345,6 +345,11 @@
         .customer-profile-link:hover { text-decoration: underline; }
         .receipt-link { color: #00ff88; cursor: pointer; }
         .receipt-link:hover { text-decoration: underline; }
+        .commission-report-grid { font-size: 11px; }
+        .commission-report-grid th, .commission-report-grid td { padding: 4px 6px; text-align: center; border-bottom: 1px solid #222; }
+        .commission-report-grid th { background: #0a0a0a; position: sticky; top: 0; z-index: 10; border-bottom: 2px solid #00d4ff; color: #00d4ff; font-size: 10px; text-transform: uppercase; }
+        .commission-report-grid .grand-total-row { background: rgba(0, 212, 255, 0.1); border-top: 2px solid #00d4ff; font-weight: bold; }
+        .commission-report-grid .sub-total-row { background: rgba(255, 170, 0, 0.05); border-top: 1px solid #ffaa00; font-weight: bold; }
     </style>
 </head>
 <body class="text-white">
@@ -1093,7 +1098,6 @@
                 txCommission = Object.values(t.staffCommissions).reduce((sum, st) => sum + (st.commission || 0), 0);
             }
             
-            // Find customer for profile link
             const customer = appData.customers.find(c => c.name === t.customer);
             const customerId = customer?.id || '';
             
@@ -1116,11 +1120,11 @@
                 <td class="text-yellow-400 font-bold">₱${txCommission.toFixed(2)}</td>
                 <td>
                     <div class="column-actions">
+                        <button onclick="event.stopPropagation();viewTransactionDetails('${t.id}')" class="action-btn bg-purple-600 text-white hover:bg-purple-700" title="View"><i class="fas fa-eye"></i></button>
                         <button onclick="event.stopPropagation();editTransactionFull('${t.id}')" class="action-btn bg-cyan-600 text-white hover:bg-cyan-700" title="Edit"><i class="fas fa-edit"></i></button>
-                        <button onclick="event.stopPropagation();deleteTransactionAndCommission('${t.id}')" class="action-btn bg-red-600 text-white hover:bg-red-700" title="Delete"><i class="fas fa-trash"></i></button>
                         <button onclick="event.stopPropagation();printReceiptFromTransaction('${t.id}')" class="action-btn bg-green-600 text-white hover:bg-green-700" title="Print"><i class="fas fa-print"></i></button>
                         <button onclick="event.stopPropagation();exportSingleTransaction('${t.id}')" class="action-btn bg-blue-600 text-white hover:bg-blue-700" title="Export"><i class="fas fa-file-export"></i></button>
-                        <button onclick="event.stopPropagation();viewTransactionDetails('${t.id}')" class="action-btn bg-purple-600 text-white hover:bg-purple-700" title="View"><i class="fas fa-eye"></i></button>
+                        <button onclick="event.stopPropagation();deleteTransactionAndCommission('${t.id}')" class="action-btn bg-red-600 text-white hover:bg-red-700" title="Delete"><i class="fas fa-trash"></i></button>
                     </div>
                 </td>
             </tr>`;
@@ -1445,11 +1449,11 @@
                 <td class="text-yellow-400 font-bold">₱${txCommission.toFixed(2)}</td>
                 <td>
                     <div class="column-actions">
+                        <button onclick="event.stopPropagation();viewTransactionDetails('${t.id}')" class="action-btn bg-purple-600 text-white hover:bg-purple-700" title="View"><i class="fas fa-eye"></i></button>
                         <button onclick="event.stopPropagation();editTransactionFull('${t.id}')" class="action-btn bg-cyan-600 text-white hover:bg-cyan-700" title="Edit"><i class="fas fa-edit"></i></button>
-                        <button onclick="event.stopPropagation();deleteTransactionAndCommission('${t.id}')" class="action-btn bg-red-600 text-white hover:bg-red-700" title="Delete"><i class="fas fa-trash"></i></button>
                         <button onclick="event.stopPropagation();printReceiptFromTransaction('${t.id}')" class="action-btn bg-green-600 text-white hover:bg-green-700" title="Print"><i class="fas fa-print"></i></button>
                         <button onclick="event.stopPropagation();exportSingleTransaction('${t.id}')" class="action-btn bg-blue-600 text-white hover:bg-blue-700" title="Export"><i class="fas fa-file-export"></i></button>
-                        <button onclick="event.stopPropagation();viewTransactionDetails('${t.id}')" class="action-btn bg-purple-600 text-white hover:bg-purple-700" title="View"><i class="fas fa-eye"></i></button>
+                        <button onclick="event.stopPropagation();deleteTransactionAndCommission('${t.id}')" class="action-btn bg-red-600 text-white hover:bg-red-700" title="Delete"><i class="fas fa-trash"></i></button>
                     </div>
                 </td>
             </tr>`;
@@ -1655,13 +1659,6 @@
         weekEnd.setDate(currentWeekStart.getDate() + 6);
         const weekEndStr = weekEnd.toISOString().slice(0,10);
 
-        const weekDates = [];
-        for (let d = 0; d < 7; d++) {
-            const dt = new Date(currentWeekStart);
-            dt.setDate(currentWeekStart.getDate() + d);
-            weekDates.push({ date: dt, dateStr: dt.toISOString().slice(0,10), dayName: ['Sunday','Monday','Tuesday','Wednesday','Thursday','Friday','Saturday'][dt.getDay()] });
-        }
-
         const weekTx = appData.transactions.filter(t => t.date >= weekStartStr && t.date <= weekEndStr);
         
         const weekStaffMap = {};
@@ -1701,24 +1698,32 @@
             s.part2 = (s.wednesday || 0) + (s.thursday || 0) + (s.friday || 0) + (s.saturday || 0);
         });
 
-        const dayHeaders = weekDates.map(wd => 
-            `<th class="text-center py-1 text-cyan-300 text-xs">${wd.dayName.slice(0,3)}<br><span class="text-gray-500 text-[10px]">${wd.dateStr}</span></th>`
-        ).join('');
-
         let tableRows = '';
         let grandTotal = 0;
         let grandJobs = 0;
         let grandSales = 0;
+        let grandSunday = 0, grandMonday = 0, grandTuesday = 0, grandWednesday = 0, grandThursday = 0, grandFriday = 0, grandSaturday = 0;
+        let grandPart1 = 0, grandPart2 = 0;
+        
         Object.values(weekStaffMap).forEach(s => {
             grandTotal += s.total;
             grandJobs += s.jobs;
             grandSales += s.sales;
+            grandSunday += (s.sunday || 0);
+            grandMonday += (s.monday || 0);
+            grandTuesday += (s.tuesday || 0);
+            grandWednesday += (s.wednesday || 0);
+            grandThursday += (s.thursday || 0);
+            grandFriday += (s.friday || 0);
+            grandSaturday += (s.saturday || 0);
+            grandPart1 += s.part1;
+            grandPart2 += s.part2;
+            
             tableRows += `<tr class="border-b border-gray-700 hover:bg-gray-800 transition">
-                <td class="py-2 font-semibold">${s.name}</td>
-                <td>${s.position}</td>
+                <td class="py-2 font-semibold text-left">${s.name}</td>
+                <td class="text-center">${s.position}</td>
                 <td class="text-center"><span class="commission-badge">${s.tier}%</span></td>
                 <td class="text-center">${s.jobs}</td>
-                <td class="text-right">₱${s.sales.toFixed(2)}</td>
                 <td class="text-center text-cyan-300">₱${(s.sunday||0).toFixed(2)}</td>
                 <td class="text-center text-cyan-300">₱${(s.monday||0).toFixed(2)}</td>
                 <td class="text-center text-cyan-300">₱${(s.tuesday||0).toFixed(2)}</td>
@@ -1747,27 +1752,43 @@
                 </div>
             </div>
             <div class="overflow-x-auto max-h-96 overflow-y-auto">
-                <table class="w-full text-sm commission-summary-table">
-                    <thead class="sticky top-0 bg-gray-900 border-b-2 border-cyan-400">
+                <table class="w-full text-sm commission-report-grid">
+                    <thead>
                         <tr>
-                            <th class="text-left">Staff</th><th class="text-left">Position</th><th class="text-center">Tier</th>
-                            <th class="text-center">Jobs</th><th class="text-right">Sales</th>
-                            ${dayHeaders}
-                            <th class="text-center text-yellow-400">Sun-Tue</th>
-                            <th class="text-center text-yellow-400">Wed-Sat</th>
-                            <th class="text-center text-green-400">Grand Total</th>
+                            <th class="text-left">Staff</th>
+                            <th>Position</th>
+                            <th>Tier</th>
+                            <th>Jobs Count</th>
+                            <th>Sunday</th>
+                            <th>Monday</th>
+                            <th>Tuesday</th>
+                            <th>Wednesday</th>
+                            <th>Thursday</th>
+                            <th>Friday</th>
+                            <th>Saturday</th>
+                            <th class="text-yellow-400">Sun-Tue</th>
+                            <th class="text-yellow-400">Wed-Sat</th>
+                            <th class="text-green-400">Grand Total</th>
                         </tr>
                     </thead>
                     <tbody>
-                        ${tableRows || '<tr><td colspan="16" class="text-center py-4 text-gray-400">No data for this week</td></tr>'}
-                        <tr class="border-t-2 border-cyan-400 bg-gray-800 font-bold">
-                            <td colspan="4" class="py-2 text-right">TOTALS:</td>
-                            <td class="text-right">₱${grandSales.toFixed(2)}</td>
-                            <td colspan="7"></td>
-                            <td class="text-center text-yellow-400">₱${Object.values(weekStaffMap).reduce((s, item) => s + item.part1, 0).toFixed(2)}</td>
-                            <td class="text-center text-yellow-400">₱${Object.values(weekStaffMap).reduce((s, item) => s + item.part2, 0).toFixed(2)}</td>
-                            <td class="text-center text-green-400">₱${grandTotal.toFixed(2)}</td>
+                        ${tableRows || '<tr><td colspan="14" class="text-center py-4 text-gray-400">No data for this week</td></tr>'}
+                        ${Object.values(weekStaffMap).length > 0 ? `
+                        <tr class="grand-total-row">
+                            <td colspan="3" class="text-right font-bold text-cyan-400">GRAND TOTALS:</td>
+                            <td class="font-bold">${grandJobs}</td>
+                            <td class="font-bold text-cyan-300">₱${grandSunday.toFixed(2)}</td>
+                            <td class="font-bold text-cyan-300">₱${grandMonday.toFixed(2)}</td>
+                            <td class="font-bold text-cyan-300">₱${grandTuesday.toFixed(2)}</td>
+                            <td class="font-bold text-cyan-300">₱${grandWednesday.toFixed(2)}</td>
+                            <td class="font-bold text-cyan-300">₱${grandThursday.toFixed(2)}</td>
+                            <td class="font-bold text-cyan-300">₱${grandFriday.toFixed(2)}</td>
+                            <td class="font-bold text-cyan-300">₱${grandSaturday.toFixed(2)}</td>
+                            <td class="font-bold text-yellow-400">₱${grandPart1.toFixed(2)}</td>
+                            <td class="font-bold text-yellow-400">₱${grandPart2.toFixed(2)}</td>
+                            <td class="font-bold text-green-400">₱${grandTotal.toFixed(2)}</td>
                         </tr>
+                        ` : ''}
                     </tbody>
                 </table>
             </div>
@@ -1807,7 +1828,6 @@
             position: s.position,
             tier: `${s.tier}%`,
             jobs: s.jobs,
-            sales: `₱${s.sales.toFixed(2)}`,
             sunday: `₱${(s.sunday||0).toFixed(2)}`,
             monday: `₱${(s.monday||0).toFixed(2)}`,
             tuesday: `₱${(s.tuesday||0).toFixed(2)}`,
@@ -1823,8 +1843,7 @@
             { key: 'name', header: 'Staff Name' },
             { key: 'position', header: 'Position' },
             { key: 'tier', header: 'Tier' },
-            { key: 'jobs', header: 'Jobs' },
-            { key: 'sales', header: 'Sales' },
+            { key: 'jobs', header: 'Jobs Count' },
             { key: 'sunday', header: 'Sunday' },
             { key: 'monday', header: 'Monday' },
             { key: 'tuesday', header: 'Tuesday' },
@@ -1872,7 +1891,6 @@
             position: s.position,
             tier: `${s.tier}%`,
             jobs: s.jobs,
-            sales: `₱${s.sales.toFixed(2)}`,
             sunday: `₱${(s.sunday||0).toFixed(2)}`,
             monday: `₱${(s.monday||0).toFixed(2)}`,
             tuesday: `₱${(s.tuesday||0).toFixed(2)}`,
@@ -1888,8 +1906,7 @@
             { key: 'name', header: 'Staff Name' },
             { key: 'position', header: 'Position' },
             { key: 'tier', header: 'Tier' },
-            { key: 'jobs', header: 'Jobs' },
-            { key: 'sales', header: 'Sales' },
+            { key: 'jobs', header: 'Jobs Count' },
             { key: 'sunday', header: 'Sunday' },
             { key: 'monday', header: 'Monday' },
             { key: 'tuesday', header: 'Tuesday' },
@@ -1937,7 +1954,6 @@
             position: s.position,
             tier: `${s.tier}%`,
             jobs: s.jobs,
-            sales: `₱${s.sales.toFixed(2)}`,
             sunday: `₱${(s.sunday||0).toFixed(2)}`,
             monday: `₱${(s.monday||0).toFixed(2)}`,
             tuesday: `₱${(s.tuesday||0).toFixed(2)}`,
@@ -1953,8 +1969,7 @@
             { key: 'name', header: 'Staff Name' },
             { key: 'position', header: 'Position' },
             { key: 'tier', header: 'Tier' },
-            { key: 'jobs', header: 'Jobs' },
-            { key: 'sales', header: 'Sales' },
+            { key: 'jobs', header: 'Jobs Count' },
             { key: 'sunday', header: 'Sunday' },
             { key: 'monday', header: 'Monday' },
             { key: 'tuesday', header: 'Tuesday' },
@@ -2160,7 +2175,6 @@
             service.status = status;
             if(status === 'completed') {
                 service.completedAt = new Date().toISOString();
-                // Process commission but DO NOT create duplicate transaction yet - wait for payment
                 processOpenServiceCommission(service, true);
             }
             saveToLocal();
@@ -2194,7 +2208,6 @@
             }
         });
 
-        // Store commission data on the service for later use
         service.pendingCommission = {
             staffMap: Object.fromEntries([...staffCommissionMap.entries()].map(([id, data]) => [id, { 
                 commission: data.commission, 
@@ -4369,6 +4382,7 @@
     console.log('%c✅ All Export (Excel/PDF/CSV) & Print Functions Fully Operational', 'color: #00ff88;');
     console.log('%c📊 Auto-Commission on Service Complete | Real-time Sync Enabled', 'color: #ffaa00;');
     console.log('%c🔄 Enhanced Transaction Dashboard with editable fields, customer profiles, and action buttons', 'color: #00d4ff;');
+    console.log('%c📋 Commission Report: Staff | Position | Tier | Jobs Count | Daily Breakdown | Sun-Tue | Wed-Sat | Grand Total', 'color: #ffaa00;');
 </script>
 </body>
 </html>
